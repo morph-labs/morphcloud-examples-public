@@ -13,7 +13,7 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 - Uses TigerVNC + noVNC for browser-based remote desktop access
 - No VNC client required - just open the provided URL
 
-### vscode-server
+### openvscode-server
 - Creates a VM running OpenVSCode Server in a Docker container
 - Provides a full VS Code experience through your browser
 - Includes a persistent workspace mounted at /home/workspace
