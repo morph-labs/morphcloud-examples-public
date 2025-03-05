@@ -47,5 +47,4 @@ python remote_desktop_setup.py
 ## Resources
 
 - [Morph Cloud Documentation](https://cloud.morph.so/docs/developers)
-- [Morph Cloud Python SDK]((https://github.com/morph-labs/morph-python-sdk/))
-```
+- [Morph Cloud Python SDK](https://github.com/morph-labs/morph-python-sdk/)
