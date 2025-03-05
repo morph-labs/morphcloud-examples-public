@@ -23,4 +23,4 @@ uv run openvscode-server_setup.py
 - alternatively, use uv venv to set up a proper venv for morphcloud
 
 ## image
-<img width="1792" alt="image" src="https://github.com/user-attachments/assets/a0bbad49-556b-4f11-8836-5d90c7f311d9" />
+<img width="1792" alt="image" src="https://github.com/user-attachments/assets/40d9286c-74dc-4f37-9aaa-d4a386ef028e" />
