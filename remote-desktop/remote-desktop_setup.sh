@@ -24,47 +24,11 @@ find_or_create_snapshot() {
     echo "No matching snapshot found. Creating new snapshot..."
     SNAPSHOT_ID=$(morphcloud snapshot create --vcpus "$VCPUS" --memory "$MEMORY" --disk-size "$DISK_SIZE")
     
-    echo "Waiting for snapshot $SNAPSHOT_ID to be ready..."
-    
-    while true; do
-      STATUS=$(morphcloud snapshot get "$SNAPSHOT_ID" | grep '"status":' | cut -d '"' -f 4)
-      echo "Snapshot status: $STATUS"
-      
-      if [ "$STATUS" = "ready" ]; then
-        break
-      elif [ "$STATUS" = "failed" ]; then
-        echo "Snapshot creation failed"
-        exit 1
-      fi
-      
-      sleep 5
-    done
-    
     # Add metadata to the snapshot
     morphcloud snapshot set-metadata "$SNAPSHOT_ID" "type=$SNAPSHOT_TYPE" "vcpus=$VCPUS" "memory=$MEMORY" "disk_size=$DISK_SIZE" > /dev/null
   fi
   
   echo "$SNAPSHOT_ID"
-}
-
-# Function to wait for an instance to be ready
-wait_for_instance() {
-  INSTANCE_ID=$1
-  echo "Waiting for instance $INSTANCE_ID to be ready..."
-  
-  while true; do
-    STATUS=$(morphcloud instance get "$INSTANCE_ID" | grep '"status":' | cut -d '"' -f 4)
-    
-    if [ "$STATUS" = "ready" ]; then
-      echo "Instance $INSTANCE_ID is ready"
-      break
-    elif [ "$STATUS" = "error" ]; then
-      echo "Instance encountered an error"
-      exit 1
-    fi
-    
-    sleep 2
-  done
 }
 
 # Main setup script

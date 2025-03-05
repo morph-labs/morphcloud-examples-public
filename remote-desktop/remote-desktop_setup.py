@@ -82,15 +82,6 @@ def get_or_create_snapshot(client, vcpus, memory, disk_size):
         disk_size=disk_size,
     )
     
-    # Wait for snapshot to be ready
-    print(f"Waiting for snapshot {snapshot.id} to be ready...")
-    while snapshot.status != "ready":
-        time.sleep(2)
-        snapshot = client.snapshots.get(snapshot.id)
-        print(f"Snapshot status: {snapshot.status}")
-        if snapshot.status == "failed":
-            raise Exception("Snapshot creation failed")
-    
     # Add metadata to the snapshot
     print("Adding metadata to snapshot...")
     snapshot.set_metadata(snapshot_metadata)
@@ -365,11 +356,6 @@ def main():
     # 2. Start an instance from the snapshot
     print(f"Starting instance from snapshot {snapshot.id}...")
     instance = client.instances.start(snapshot.id)
-    
-    # Wait for instance to be ready
-    print(f"Waiting for instance {instance.id} to be ready...")
-    instance.wait_until_ready()
-    print(f"Instance {instance.id} is ready")
     
     # 3. Set up remote desktop directly via SSH
     try:

@@ -12,8 +12,11 @@ uv run remote-desktop_setup.py
 ```
 
 ## info
-- opens VNC server and GUI
+- sets up XFCE4 desktop environment
+- runs TigerVNC server with noVNC web client
 - uses a 4 vcpu 4GB ram and 8GB disk instance
+- accessible through web browser - no VNC client needed
+
 
 ## notes
 - make sure to export your MORPH_API_KEY into your environment
