@@ -8,7 +8,7 @@ chmod +x remote-desktop_setup.sh
 
 ## python
 ```python
-uv run remote-desktop_setup.sh
+uv run remote-desktop_setup.py
 ```
 
 ## info
