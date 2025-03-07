@@ -237,3 +237,11 @@ echo "https://desktop-${INSTANCE_ID//_/-}.http.cloud.morph.so/vnc_lite.html"
 echo -e "\nInstance ID: $INSTANCE_ID"
 echo "To SSH into this instance: morphcloud instance ssh $INSTANCE_ID"
 echo "To stop this instance: morphcloud instance stop $INSTANCE_ID"
+
+# Create a final snapshot
+echo -e "\nCreating a final snapshot for future use..."
+FINAL_SNAPSHOT_ID=$(morphcloud instance snapshot "$INSTANCE_ID")
+morphcloud snapshot set-metadata "$FINAL_SNAPSHOT_ID" "type=remote-desktop" "description=Remote desktop environment with XFCE and noVNC"
+
+echo "Final snapshot created: $FINAL_SNAPSHOT_ID"
+echo "To start a new instance from this snapshot, run: morphcloud instance start $FINAL_SNAPSHOT_ID"

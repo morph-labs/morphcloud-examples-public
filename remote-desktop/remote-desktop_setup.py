@@ -375,6 +375,16 @@ def main():
         
         print(f"\nAccess your remote desktop at: {desktop_service.url}/vnc_lite.html")
         print(f"https://desktop-{instance.id.replace('_', '-')}.http.cloud.morph.so/vnc_lite.html")
+        
+        # Create a final snapshot
+        print("\nCreating a final snapshot for future use...")
+        final_snapshot = instance.snapshot()
+        final_snapshot.set_metadata({
+            "type": "remote-desktop",
+            "description": "Remote desktop environment with XFCE and noVNC"
+        })
+        print(f"Final snapshot created: {final_snapshot.id}")
+        print(f"To start a new instance from this snapshot, run: morphcloud instance start {final_snapshot.id}")
             
     except Exception as e:
         print(f"\nSetup failed: {e}")

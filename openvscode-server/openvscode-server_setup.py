@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
-"""
-Setup script for creating a Morph Cloud VM with OpenVSCode Server.
-This version directly runs commands via SSH instead of using Ansible.
-"""
+# /// script
+# dependencies = [
+#   "morphcloud",
+# ]
+# ///
 
+#!/usr/bin/env python3
 import os
 import time
 import sys
@@ -191,6 +192,16 @@ def main():
         else:
             print("\nCould not find VSCode HTTP service URL. You can manually access it at:")
             print(f"https://vscode-{instance.id.replace('_', '-')}.http.cloud.morph.so")
+        
+        # Create a final snapshot
+        print("\nCreating a final snapshot for future use...")
+        final_snapshot = instance.snapshot()
+        final_snapshot.set_metadata({
+            "type": "openvscode-server",
+            "description": "OpenVSCode Server environment"
+        })
+        print(f"Final snapshot created: {final_snapshot.id}")
+        print(f"To start a new instance from this snapshot, run: morphcloud instance start {final_snapshot.id}")
             
     except Exception as e:
         print(f"\nSetup failed: {e}")
