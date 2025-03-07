@@ -18,6 +18,17 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 - Provides a full VS Code experience through your browser
 - Includes a persistent workspace mounted at /home/workspace
 
+### docker-buildkit
+- Configures a VM with Docker BuildKit for containerized development
+- Enables accelerated container builds with caching
+- Optimized for efficient CI/CD pipelines and container workflows
+
+### fullstack-devbox
+- Sets up a Bun development environment with integrated PostgreSQL
+- Includes a React Todo app demo with Bun's HMR (Hot Module Reloading)
+- Provides a complete fullstack development environment ready for use
+- Claude code setup instructions included for AI fullstack development
+
 ## Prerequisites
 
 - A Morph Cloud [account](https://cloud.morph.so/docs/developers)
@@ -31,20 +42,8 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 
 Each example has its own directory with a detailed README and setup script.
 
-Using uv (recommended):
-```bash
-cd vscode-server
-uv run vscode_server_setup.py
-```
-
-Using standard Python:
-```bash
-cd remote-desktop
-pip install -r requirements.txt
-python remote_desktop_setup.py
-```
-
 ## Resources
 
 - [Morph Cloud Documentation](https://cloud.morph.so/docs/developers)
 - [Morph Cloud Python SDK](https://github.com/morph-labs/morph-python-sdk/)
+- [Morph Cloud Typescript SDK](https://github.com/morph-labs/morph-typescript-sdk/)

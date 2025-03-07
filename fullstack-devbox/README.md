@@ -24,7 +24,7 @@ bun run setup.ts  # Sets up a Bun development environment with Todo app
 - takes advantage of snapshot caching for faster setup
 - connects to PostgreSQL with URL: postgres://postgres:postgres@localhost:5432/postgres
 - supports Claude Code integration for AI-assisted development
-- environment includes Bun's hot module replacement for fast iteration
+- environment includes Bun's hot module reloading for fast frontend iteration
 
 ## image
 <img width="1792" alt="bunbox demo" src="[URL TO SCREENSHOT]" />

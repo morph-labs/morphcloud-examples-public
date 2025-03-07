@@ -96,8 +96,7 @@ echo "Starting instance from snapshot $SNAPSHOT_ID..."
 INSTANCE_ID=$(morphcloud instance start "$SNAPSHOT_ID")
 echo "Started instance $INSTANCE_ID"
 
-# Wait for instance to be ready
-wait_for_instance "$INSTANCE_ID"
+# Instance is ready immediately
 
 # Set up the VSCode server
 setup_vscode_server "$INSTANCE_ID"
