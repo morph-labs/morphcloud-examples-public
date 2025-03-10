@@ -17,7 +17,7 @@ python setup_mcp.py
 
 ```bash
 # Connect to servers
-python unified_client.py unified_config.json
+python client_sse.py <sse_endpoint>
 ```
 
 ## info
@@ -29,6 +29,7 @@ python unified_client.py unified_config.json
 
 ## notes
 - make sure to export your MORPH_API_KEY into your environment
+    - [get early access](https://docs.google.com/forms/d/1F8JeJEJWwP5ywfmGN_N-r3MBNHVzry7k1Dg_2YEex28/viewform?edit_requested=true)
 - supports existing VM integration with `--instance-id <vm-id>`
 - customize VM specs with `--vcpus`, `--memory`, and `--disk-size` options
 - includes unified client that supports both SSE and stdio transport methods
@@ -48,10 +49,10 @@ python setup_mcp.py --instance-id abc123 --base-port 4000
 
 ### Connect with unified client
 ```bash
-python unified_client.py
-connect my-server
-query Hello, world!
+# Connect to servers
+python client_sse.py https://remote-server-brave-search-1-morphvm-jdf4963i.http.cloud.morph.so/sse
 ```
+
 
 ### Connect with Claude Desktop 
 
@@ -91,6 +92,3 @@ https://remote-server-tool-morphvm-abc123.http.cloud.morph.so/sse
 ```bash
 npx -y supergateway --sse https://remote-server-tool-morphvm-abc123.http.cloud.morph.so/sse
 ```
-
-## image
-<img width="1792" alt="mcp-devbox demo" src="" />

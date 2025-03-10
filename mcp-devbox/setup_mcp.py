@@ -1265,10 +1265,24 @@ def setup_single_server(instance, args, existing_services=None, server_count=0):
         svc.name: True for svc in instance.networking.http_services
     })
     
+    auth_mode = None
+    if args.api_key_auth:
+        auth_mode = "api_key"
+    else:
+        print("\nWould you like to secure this MCP server with API key authentication?")
+        print("This will require clients to provide an API key to access the server.")
+        choice = input("Enable API key authentication? [y/N]: ").strip().lower()
+        if choice == 'y':
+            auth_mode = "api_key"
+
+    
     # Expose HTTP service with the unique name
     print(f"\nExposing HTTP service as '{http_service_name}'...")
-    instance.expose_http_service(http_service_name, port)
-    
+    if auth_mode is not None:
+        instance.expose_http_service(http_service_name, port, auth_mode=auth_mode)
+    else:
+        instance.expose_http_service(http_service_name, port)
+
     # Return the configuration
     return server_config, http_service_name, port
 
