@@ -18,6 +18,7 @@ from typing import List
 import json
 from datetime import datetime
 import pathlib
+import webbrowser
 
 # Disable browser-use telemetry
 os.environ["ANONYMIZED_TELEMETRY"] = "false"
@@ -179,22 +180,33 @@ async def setup_browser_for_amazon_login():
     console.print(f"[bold yellow]{prompt}[/bold yellow]")
     console.print(f"[bold green]Browser with VNC access will open. {completion_prompt}[/bold green]")
 
-    async with await MorphBrowser.create(initial_url=initial_url) as browser_instance: # Create fresh instance with initial URL
+    async with await MorphBrowser.create(initial_url=initial_url) as browser_instance:
         vnc_url = browser_instance.vnc_url
         browser_url = browser_instance.cdp_url
-
-        console.print(f"\nInstance ID: {browser_instance.instance.id}") # Access underlying instance to get ID
+        vnc_viewer_url = f"{vnc_url}/vnc_lite.html"
+    
+        console.print(f"\nInstance ID: {browser_instance.instance.id}")
         console.print(f"Browser URL (CDP): {browser_url}")
         console.print(f"VNC desktop access: {vnc_url}")
+    
+        # Try to automatically open the browser
+        try:
+            if webbrowser.open(vnc_viewer_url):
+                console.print("[green]VNC viewer opened in your default browser[/green]")
+            else:
+                raise Exception("Failed to open browser automatically")
+        except Exception as e:
+            console.print("[yellow]Couldn't automatically open the browser.[/yellow]")
+            console.print(f"[white]Please copy and paste this URL into your browser to complete setup:[/white]")
+            console.print(f"[blue]{vnc_viewer_url}[/blue]")
 
-        import subprocess
-        subprocess.run(["xdg-open", f"{vnc_url}/vnc_lite.html"], check=False) # Open VNC in default browser
-
+        # Wait for user confirmation
+        input("\nPress Enter once you've completed the login process...")
+    
         console.print("[yellow]Creating snapshot of logged-in browser state...[/yellow]")
-        snapshotted_browser = await browser_instance.snapshot(digest="amazon-logged-in") # Create snapshot
+        snapshotted_browser = await browser_instance.snapshot(digest="amazon-logged-in")
         console.print(f"[green]Snapshot 'amazon-logged-in' created with ID: {snapshotted_browser.snapshot_id}[/green]")
-        return snapshotted_browser.snapshot_id # Return the snapshot ID
-
+        return snapshotted_browser.snapshot_id
 
 async def main():
 
