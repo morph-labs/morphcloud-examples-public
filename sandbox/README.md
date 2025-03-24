@@ -1,8 +1,28 @@
 # Morph Sandbox: JupyterLab Environment on Morph Cloud
 
-This project introduces **Morph Sandbox**, a Python class (`morph_sandbox.py`) designed to simplify the management of JupyterLab environments on [Morph Cloud](https://morphcloud.ai/). Morph Sandbox provides a flexible infrastructure for data analysis, computational tasks, and interactive dashboard development with tools like JupyterLab and Streamlit.
+This project introduces **Morph Sandbox**, a Python class (`morph_sandbox.py`) designed to simplify the management of JupyterLab environments on [Morph Cloud](https://cloud.morph.so/web/). Morph Sandbox provides a flexible infrastructure for data analysis, computational tasks, and interactive dashboard development with tools like JupyterLab and Streamlit.
 
 The project also includes a **stock analysis demo script** (`stock_demo.py`) as an example of how to use Morph Sandbox to create data analysis environments and run parallel agent-based workflows for financial data analysis.
+
+**Quickstart**
+```python
+import asyncio
+from morph_sandbox import MorphSandbox
+
+async def main():
+    
+   # Use context manager for automatic cleanup
+   async with await MorphSandbox.create() as sandbox:
+
+      # Execute Python code directly
+      result = await sandbox.execute_code("x = 42")
+
+      result = await sandbox.execute_code("print(f'the answer is {x}')
+      print(result['output'])
+      pass
+
+asyncio.run(main())
+```
 
 ## Scripts Overview
 
@@ -23,7 +43,7 @@ The project also includes a **stock analysis demo script** (`stock_demo.py`) as 
 
 Before you begin, ensure you have the following:
 
-1. **Morph Cloud Account and API Key:** You need an account on [Morph Cloud](https://morphcloud.ai/) and an active API key.
+1. **Morph Cloud Account and API Key:** You need an account on [Morph Cloud](https://cloud.morph.so/web/) and an active API key.
 2. **Python 3.11 or higher:** The scripts require Python 3.11 or a later version.
 3. **uv installed**: Ensure you have [uv](https://astral.sh/uv) installed, which is a fast Python package installer and runner. Follow the installation instructions on the uv website.
 
@@ -72,3 +92,152 @@ The stock demo (`stock_demo.py`) showcases:
 3. **Create and Manage Sandbox Instances:** Use `MorphSandbox.create()` to create a new sandbox instance (from scratch or a snapshot). Manage the sandbox lifecycle using `async with` context manager or by calling `await sandbox_instance.stop()` when done. **Remember to export your `MORPH_API_KEY` environment variable before running your scripts.**
 
 Morph Sandbox aims to provide a flexible and reusable foundation for computational environments on Morph Cloud. The `stock_demo.py` is just one example of its potential applications. Adapt and extend Morph Sandbox for your specific computational needs, from data analysis to machine learning workflows.
+
+
+## Quick Examples
+
+**1. Create and manage a sandbox**
+```python
+import asyncio
+from morph_sandbox import MorphSandbox
+
+async def main():
+    # Create a new sandbox instance
+    sandbox = await MorphSandbox.create()
+    
+    # Use context manager for automatic cleanup
+    async with await MorphSandbox.create() as sandbox:
+        # Your code here
+        pass
+
+asyncio.run(main())
+```
+
+**2. Execute code directly**
+```python
+async def run_code_example():
+    async with await MorphSandbox.create() as sandbox:
+        # Execute Python code directly
+        result = await sandbox.execute_code("x = 42")
+        
+        # Access the result
+        result = await sandbox.execute_code("print(f'The value is {x}')")
+        print(result["output"])  # outputs: The value is 42
+
+asyncio.run(run_code_example())
+```
+
+**3. Work with notebooks**
+```python
+async def notebook_example():
+    async with await MorphSandbox.create() as sandbox:
+        # Create a new notebook
+        notebook = await sandbox.create_notebook("analysis.ipynb")
+        
+        # Add cells to the notebook
+        cell = await sandbox.add_cell(
+            notebook_path="analysis.ipynb",
+            content="import pandas as pd\nimport matplotlib.pyplot as plt",
+            cell_type="code"
+        )
+        
+        # Execute a specific cell
+        await sandbox.execute_cell("analysis.ipynb", cell["index"])
+        
+        # Execute the entire notebook
+        await sandbox.execute_notebook("analysis.ipynb")
+
+asyncio.run(notebook_example())
+```
+
+**4. File operations**
+```python
+async def file_operations_example():
+    async with await MorphSandbox.create() as sandbox:
+        # Upload a single file to the sandbox
+        await sandbox.upload_file(
+            local_path="data.csv", 
+            remote_path="/root/notebooks/data.csv"
+        )
+        
+        # Upload a directory recursively
+        await sandbox.upload_file(
+            local_path="./project_data/", 
+            remote_path="/root/notebooks/project_data",
+            recursive=True
+        )
+        
+        # List files in a directory
+        files = await sandbox.list_remote_files("/root/notebooks")
+        
+        # Download a single file from the sandbox
+        await sandbox.download_file(
+            remote_path="/root/notebooks/results.csv",
+            local_path="./results.csv"
+        )
+        
+        # Download a directory recursively
+        await sandbox.download_file(
+            remote_path="/root/notebooks/output_data",
+            local_path="./local_output",
+            recursive=True
+        )
+
+asyncio.run(file_operations_example())
+```
+
+**5. Create and restore snapshots**
+```python
+async def snapshot_example():
+    # Create a sandbox and take a snapshot
+    sandbox = await MorphSandbox.create()
+    snapshot_id = await sandbox.snapshot(digest="my-configured-environment")
+    await sandbox.stop()
+    
+    # Later, restore from the snapshot
+    restored_sandbox = await MorphSandbox.create(snapshot_id=snapshot_id)
+    
+    # Clean up when done
+    await restored_sandbox.stop()
+
+asyncio.run(snapshot_example())
+```
+
+**6. Integrate with Anthropic's Claude API**
+```python
+# pip install anthropic morph_sandbox
+import asyncio
+from anthropic import Anthropic
+from morph_sandbox import MorphSandbox
+
+async def claude_code_execution():
+    # Create Anthropic client
+    anthropic = Anthropic()
+    
+    # Define system prompt and user question
+    system_prompt = "You are a helpful assistant that can execute python code in a Jupyter notebook. Only respond with the code to be executed and nothing else. Strip backticks in code blocks."
+    prompt = "Calculate how many r's are in the word 'strawberry'"
+    
+    # Send messages to Anthropic API
+    response = anthropic.messages.create(
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=1024,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    
+    # Extract code from response
+    code = response.content[0].text
+    
+    # Execute code in MorphSandbox
+    async with await MorphSandbox.create() as sandbox:
+        result = await sandbox.execute_code(code)
+        output = result["output"]
+    
+    print(output)
+
+# Run the example
+asyncio.run(claude_code_execution())
+```
