@@ -6,20 +6,22 @@ This project demonstrates how to use Morph Cloud to create a fully autonomous ag
 
 ## Getting Started
 
-1. Install dependencies:
+
+1. Set your API keys:
+   ```
+   export ANTHROPIC_API_KEY="your_api_key"
+   export MORPH_API_KEY="your_morph_api_key"
+   ```
+   
+2. Install dependencies:
    ```
    pip install anthropic morphcloud
    ```
    
-   You can also use `uv` to automatically download dependencies:
+   You can also use `uv run` to automatically download dependencies:
    ```
-   uv pip install anthropic morphcloud
-   ```
-
-2. Set your API keys:
-   ```
-   export ANTHROPIC_API_KEY="your_api_key"
-   export MORPH_API_KEY="your_morph_api_key"
+   uv run emulator/emulator_setup_rom.py --rom path/to/your/rom.gb
+   uv run emu_agent.py --snapshot your_snapshot_id --turns 100
    ```
 
 3. Run the emulator setup with your ROM file:
@@ -42,7 +44,6 @@ A Python class that creates an autonomous agent to play games through the MorphC
 - Extracts actions (key presses) from Claude's responses
 - Executes game actions in the emulator
 - Maintains conversation context with screenshots and responses
-- Features a configurable gameplay loop
 
 ```python
 # Example: Initialize and run the agent with a specific snapshot
@@ -57,8 +58,6 @@ A foundation class for interacting with cloud-based VM environments:
 - Creates and manages VM instances (from scratch or snapshots)
 - Provides desktop interaction methods (mouse, keyboard, screenshots)
 - Handles service configuration and exposure
-- Implements retry mechanisms and error handling
-- Supports VM lifecycle management and snapshots
 
 ### Emulator Setup (`emulator/emulator_setup_rom.py`)
 
@@ -75,11 +74,11 @@ A setup script that:
 
 This project leverages Morph Cloud's powerful VM snapshot capabilities:
 
-- **State Preservation**: Snapshots preserve the entire VM state, including installed software, configurations, and in this case, the loaded ROM and emulator state. This makes them perfect for saving game progress or different gameplay states.
+- **State Preservation**: Snapshots preserve the entire memory and filesystem state of a Morph VM. This makes them perfect for easily replicating a game state to attach a new agent seamlessly, without having to manually mess with the RAM state of the emulator. 
 
 - **Snapshot Metadata**: Snapshots are tagged with metadata (like `type: "emulator-complete"` and ROM information) for easy identification and management.
 
-- **Instant Resume**: You can create a VM instance from any snapshot using its ID, allowing you to pick up exactly where you left off. The `EmuAgent` can connect to an existing instance or create one from a snapshot.
+- **Instant Resume**: You can spin up an instance from any snapshot using its ID, allowing you to pick up exactly where you left off. The `EmuAgent` can connect to an existing instance or create one from a snapshot.
 
 ```python
 # Example: Creating a snapshot of your current game state
