@@ -1,3 +1,9 @@
+# /// script
+# dependencies = [
+# "morphcloud"
+# ]
+# ///
+
 import subprocess
 import time
 import shlex

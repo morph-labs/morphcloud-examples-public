@@ -1,3 +1,10 @@
+# /// script
+# dependencies = [
+# "morphcloud",
+# "anthropic"
+# ]
+# ///
+
 import os
 import time
 import json
