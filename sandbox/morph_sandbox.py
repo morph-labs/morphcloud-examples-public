@@ -32,6 +32,10 @@ from rich.live import Live
 # Setup console for nice output
 console = Console()
 
+class InvalidSandboxSnapshotError(Exception):
+    """Raised when a snapshot is not a valid sandbox environment."""
+    pass
+
 class JupyterMessageEncoder(json.JSONEncoder):
     """Custom JSON encoder for Jupyter messages"""
     def default(self, obj: Any) -> Any:
@@ -41,14 +45,14 @@ class JupyterMessageEncoder(json.JSONEncoder):
             return obj.decode('utf-8')
         return super().default(obj)
 
-class JupyterKernelClient:
-    """Client for interacting with Jupyter kernels via WebSockets"""
+class JupyterKernelManager:
+    """Manages connections to Jupyter kernels"""
     
     def __init__(self, jupyter_url: str, token: str = ""):
         self.jupyter_url = jupyter_url
         self.token = token
-        self.kernel_id = None
-        self.ws = None
+        self.active_kernels = {}  # kernel_id -> websocket
+        self.default_kernel_id = None
         self.session = Session(key=b'', username='kernel')
     
     async def wait_for_service(self, timeout=30):
@@ -76,6 +80,79 @@ class JupyterKernelClient:
                 await asyncio.sleep(2)
             raise TimeoutError("Jupyter service failed to start")
 
+    async def list_kernels(self) -> List[dict]:
+        """Get list of all running kernels"""
+        headers = {}
+        if self.token and self.token.strip():
+            headers["Authorization"] = f"token {self.token}"
+            
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.jupyter_url}/api/kernels",
+                headers=headers
+            )
+            response.raise_for_status()
+            kernels = response.json()
+            
+            if kernels:
+                console.print("[green]Found kernels:[/green]")
+                for kernel in kernels:
+                    console.print(f"- {kernel.get('id')} ({kernel.get('name')})")
+            else:
+                console.print("[yellow]No kernels found[/yellow]")
+                
+            return kernels
+
+    async def connect_to_kernel(self, kernel_id: str):
+        """Connect to an existing kernel"""
+        if kernel_id in self.active_kernels:
+            return self.active_kernels[kernel_id]
+
+        # Connect to kernel websocket
+        ws_url = self.jupyter_url.replace('https://', 'wss://').replace('http://', 'ws://')
+        ws_endpoint = f"{ws_url}/api/kernels/{kernel_id}/channels"
+        
+        if self.token and self.token.strip():
+            ws_endpoint += f"?token={self.token}"
+
+        try:
+            console.print(f"[yellow]Connecting to kernel {kernel_id}...[/yellow]")
+            ws = await websockets.connect(ws_endpoint)
+            self.active_kernels[kernel_id] = ws
+            console.print(f"[green]Connected to kernel {kernel_id}[/green]")
+            
+            # Set as default if no default exists
+            if not self.default_kernel_id:
+                self.default_kernel_id = kernel_id
+                console.print(f"[green]Set kernel {kernel_id} as default[/green]")
+                
+            return ws
+        except Exception as e:
+            console.print(f"[red]Failed to connect to kernel {kernel_id}: {e}[/red]")
+            raise ConnectionError(f"Failed to connect to kernel {kernel_id}: {e}")
+
+    async def start_new_kernel(self, kernel_name="python3") -> str:
+        """Start a new kernel and return its ID"""
+        headers = {}
+        if self.token and self.token.strip():
+            headers["Authorization"] = f"token {self.token}"
+
+        console.print(f"[yellow]Starting new {kernel_name} kernel...[/yellow]")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.jupyter_url}/api/kernels",
+                headers=headers,
+                json={"name": kernel_name}
+            )
+            response.raise_for_status()
+            kernel_info = response.json()
+            kernel_id = kernel_info['id']
+            console.print(f"[green]Started new kernel with ID: {kernel_id}[/green]")
+            
+            # Connect to the new kernel
+            await self.connect_to_kernel(kernel_id)
+            return kernel_id
+
     def _prepare_message(self, msg_type: str, content: dict) -> tuple[dict, str]:
         """Prepare a Jupyter message in the correct format"""
         msg_id = str(uuid.uuid4())
@@ -95,11 +172,21 @@ class JupyterKernelClient:
         }
         return msg, msg_id
 
-    async def execute(self, code: str) -> dict:
-        """Execute code on a kernel and return the results"""
-        if not self.ws:
-            raise RuntimeError("WebSocket connection not established")
-            
+    async def execute(self, code: str, kernel_id: str = None) -> dict:
+        """Execute code on specified kernel or default kernel"""
+        if not kernel_id:
+            kernel_id = self.default_kernel_id
+            if not kernel_id:
+                # No default kernel, create one
+                kernel_id = await self.start_new_kernel()
+                self.default_kernel_id = kernel_id
+
+        # Connect to kernel if not already connected
+        if kernel_id not in self.active_kernels:
+            await self.connect_to_kernel(kernel_id)
+
+        ws = self.active_kernels[kernel_id]
+        
         msg, msg_id = self._prepare_message('execute_request', {
             'code': code,
             'silent': False,
@@ -109,9 +196,9 @@ class JupyterKernelClient:
             'stop_on_error': True
         })
         
-        console.print(f"\n[bold blue]Executing code:[/bold blue]")
+        console.print(f"\n[bold blue]Executing code on kernel {kernel_id}:[/bold blue]")
         console.print(Syntax(code, "python", theme="monokai", line_numbers=True))
-        await self.ws.send(json.dumps(msg, cls=JupyterMessageEncoder))
+        await ws.send(json.dumps(msg, cls=JupyterMessageEncoder))
         
         outputs = []
         execution_count = None
@@ -131,7 +218,7 @@ class JupyterKernelClient:
                 
             try:
                 # Set a timeout on receive to avoid hanging indefinitely
-                response = await asyncio.wait_for(self.ws.recv(), timeout=5.0)
+                response = await asyncio.wait_for(ws.recv(), timeout=5.0)
                 response_data = json.loads(response)
                 
                 parent_msg_id = response_data.get('parent_header', {}).get('msg_id')
@@ -191,7 +278,8 @@ class JupyterKernelClient:
         result = {
             'status': status,
             'execution_count': execution_count,
-            'output': '\n'.join(outputs).strip()
+            'output': '\n'.join(outputs).strip(),
+            'kernel_id': kernel_id
         }
         
         if result['status'] == 'ok':
@@ -205,12 +293,14 @@ class JupyterKernelClient:
             
         return result
 
-    async def interrupt_kernel(self):
+    async def interrupt_kernel(self, kernel_id: str = None):
         """Send interrupt signal to the kernel"""
-        if not self.kernel_id:
-            raise RuntimeError("No kernel available")
+        if not kernel_id:
+            kernel_id = self.default_kernel_id
+        if not kernel_id:
+            raise ValueError("No kernel specified and no default kernel")
             
-        console.print("[yellow]Interrupting kernel...[/yellow]")
+        console.print(f"[yellow]Interrupting kernel {kernel_id}...[/yellow]")
         
         # Only include Authorization header if token is not empty
         headers = {}
@@ -219,86 +309,52 @@ class JupyterKernelClient:
             
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.jupyter_url}/api/kernels/{self.kernel_id}/interrupt",
+                f"{self.jupyter_url}/api/kernels/{kernel_id}/interrupt",
                 headers=headers
             )
             response.raise_for_status()
-            console.print("[green]Kernel interrupted[/green]")
+            console.print(f"[green]Kernel {kernel_id} interrupted[/green]")
             return response.json()
 
-    async def restart_kernel(self):
+    async def restart_kernel(self, kernel_id: str = None):
         """Restart the kernel"""
-        if not self.kernel_id:
-            raise RuntimeError("No kernel available")
+        if not kernel_id:
+            kernel_id = self.default_kernel_id
+        if not kernel_id:
+            raise ValueError("No kernel specified and no default kernel")
             
-        console.print("[yellow]Restarting kernel...[/yellow]")
+        console.print(f"[yellow]Restarting kernel {kernel_id}...[/yellow]")
         
         # Only include Authorization header if token is not empty
         headers = {}
         if self.token and self.token.strip():
             headers["Authorization"] = f"token {self.token}"
             
+        # Close existing websocket if it exists
+        if kernel_id in self.active_kernels:
+            await self.active_kernels[kernel_id].close()
+            del self.active_kernels[kernel_id]
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.jupyter_url}/api/kernels/{self.kernel_id}/restart",
+                f"{self.jupyter_url}/api/kernels/{kernel_id}/restart",
                 headers=headers
             )
             response.raise_for_status()
-            console.print("[green]Kernel restarted[/green]")
+            console.print(f"[green]Kernel {kernel_id} restarted[/green]")
+            
+            # Reconnect to the restarted kernel
+            await self.connect_to_kernel(kernel_id)
             return response.json()
     
-    async def start(self):
-        """Initialize the kernel client and establish connection"""
-        await self.wait_for_service()
-        
-        # Only include Authorization header if token is not empty
-        headers = {}
-        if self.token and self.token.strip():
-            headers["Authorization"] = f"token {self.token}"
-            
-        async with httpx.AsyncClient() as client:
-            try:
-                console.print("[yellow]Creating kernel...[/yellow]")
-                response = await client.post(
-                    f"{self.jupyter_url}/api/kernels",
-                    headers=headers
-                )
-                response.raise_for_status()
-                kernel_info = response.json()
-                self.kernel_id = kernel_info['id']
-                console.print(f"[green]Created kernel with ID: {self.kernel_id}[/green]")
-            except Exception as e:
-                console.print(f"[red]Failed to create kernel: {e}[/red]")
-                if 'response' in locals():
-                    console.print(f"Response: {response.content}")
-                raise
-
-        # Connect WebSocket with proper authentication
-        ws_url = self.jupyter_url.replace('https://', 'wss://').replace('http://', 'ws://')
-        
-        # Base WebSocket endpoint
-        ws_endpoint = f"{ws_url}/api/kernels/{self.kernel_id}/channels"
-        
-        try:
-            console.print(f"[yellow]Connecting to WebSocket...[/yellow]")
-            
-            # Only add token query parameter if token is not empty
-            if self.token and self.token.strip():
-                auth_endpoint = f"{ws_endpoint}?token={self.token}"
-            else:
-                auth_endpoint = ws_endpoint
-                
-            self.ws = await websockets.connect(auth_endpoint)
-            console.print("[green]WebSocket connection established[/green]")
-        except Exception as e:
-            console.print(f"[red]WebSocket connection failed: {e}[/red]")
-            raise
-
     async def close(self):
-        """Close all connections"""
-        if self.ws:
-            await self.ws.close()
-            console.print("[yellow]WebSocket connection closed[/yellow]")
+        """Close all kernel connections"""
+        for kernel_id, ws in list(self.active_kernels.items()):
+            console.print(f"[yellow]Closing connection to kernel {kernel_id}[/yellow]")
+            await ws.close()
+            del self.active_kernels[kernel_id]
+        self.default_kernel_id = None
+        console.print("[green]All kernel connections closed[/green]")
 
 class JupyterNotebookClient:
     """Client for interacting with Jupyter notebooks via HTTP API"""
@@ -312,15 +368,37 @@ class JupyterNotebookClient:
         if token and token.strip():
             self.headers["Authorization"] = f"token {token}"
             
-        self.kernel_client = JupyterKernelClient(jupyter_url, token)
+        self.kernel_manager = JupyterKernelManager(jupyter_url, token)
+    
+    async def wait_for_service(self, timeout=30):
+        """Wait for Jupyter service to be ready"""
+        return await self.kernel_manager.wait_for_service(timeout)
     
     async def start(self):
         """Initialize the client and kernel connection"""
-        await self.kernel_client.start()
+        await self.wait_for_service()
+        return await self.kernel_manager.start_new_kernel()
+    
+    async def connect_to_existing(self):
+        """Connect to existing kernels if available"""
+        await self.wait_for_service()
+        kernels = await self.kernel_manager.list_kernels()
+        
+        if not kernels:
+            console.print("[yellow]No existing kernels found, starting a new one[/yellow]")
+            await self.kernel_manager.start_new_kernel()
+        else:
+            for kernel in kernels:
+                try:
+                    await self.kernel_manager.connect_to_kernel(kernel['id'])
+                except Exception as e:
+                    console.print(f"[yellow]Warning: Failed to connect to kernel {kernel['id']}: {e}[/yellow]")
+                    
+        return self.kernel_manager.default_kernel_id
     
     async def close(self):
         """Close all connections"""
-        await self.kernel_client.close()
+        await self.kernel_manager.close()
     
     async def list_notebooks(self, path: str = ""):
         """List all notebooks in a directory"""
@@ -442,7 +520,7 @@ class JupyterNotebookClient:
         cell_index = index if index is not None else len(notebook["cells"]) - 1
         return {"index": cell_index, "cell": new_cell}
     
-    async def execute_cell(self, notebook_path: str, cell_index: int):
+    async def execute_cell(self, notebook_path: str, cell_index: int, kernel_id: str = None):
         """Execute a specific cell in a notebook"""
         # Get the notebook
         notebook_data = await self.get_notebook(notebook_path)
@@ -465,7 +543,7 @@ class JupyterNotebookClient:
         console.print(f"[yellow]Executing cell {cell_index} in notebook {notebook_path}[/yellow]")
         
         # Execute the code
-        result = await self.kernel_client.execute(code)
+        result = await self.kernel_manager.execute(code, kernel_id)
         
         # Update the cell with the result
         cell["execution_count"] = result["execution_count"]
@@ -491,7 +569,7 @@ class JupyterNotebookClient:
         
         return result
     
-    async def execute_notebook(self, notebook_path: str):
+    async def execute_notebook(self, notebook_path: str, kernel_id: str = None):
         """Execute all code cells in a notebook in order"""
         console.print(f"[yellow]Executing all cells in notebook: {notebook_path}[/yellow]")
         
@@ -506,7 +584,7 @@ class JupyterNotebookClient:
             if cell["cell_type"] == "code":
                 console.print(f"[yellow]Executing cell {i}...[/yellow]")
                 try:
-                    result = await self.execute_cell(notebook_path, i)
+                    result = await self.execute_cell(notebook_path, i, kernel_id)
                     results.append({"index": i, "status": result["status"]})
                     console.print(f"[green]Cell {i} execution complete[/green]")
                 except Exception as e:
@@ -528,25 +606,17 @@ class JupyterNotebookClient:
             console.print(f"[green]Notebook deleted: {path}[/green]")
             return True
     
-    async def list_kernels(self):
-        """List all available kernels"""
-        console.print("[yellow]Listing available kernels...[/yellow]")
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.jupyter_url}/api/kernels",
-                headers=self.headers
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            if result:
-                console.print("[green]Found kernels:[/green]")
-                for kernel in result:
-                    console.print(f"- {kernel.get('id')} ({kernel.get('name')})")
-            else:
-                console.print("[yellow]No kernels found[/yellow]")
-                
-            return result
+    async def execute_code(self, code: str, kernel_id: str = None):
+        """Execute code directly on a kernel"""
+        return await self.kernel_manager.execute(code, kernel_id)
+
+class SandboxState:
+    """Represents the state of a sandbox instance."""
+    def __init__(self):
+        self.jupyter_url = None
+        self.active_kernels = []
+        self.exposed_services = {}
+        self.installed_packages = []
 
 class MorphSandbox:
     """Main class for managing a computational sandbox based on MorphCloud and JupyterLab."""
@@ -557,41 +627,185 @@ class MorphSandbox:
         self.instance = None
         self.jupyter_url = None
         self.jupyter_client = None
+        self.state = SandboxState()
         
     @classmethod
-    async def create(cls, snapshot_id=None):
-        """Create a new sandbox from scratch or from a snapshot."""
+    async def create(cls, snapshot_id=None, verify=True, ttl_seconds=None, ttl_action="stop"):
+        """Create a new sandbox from scratch or from a snapshot.
+        
+        Args:
+            snapshot_id: Optional ID of a snapshot to start from
+            verify: Whether to verify the snapshot contains a valid sandbox environment
+            ttl_seconds: Optional time-to-live in seconds for the instance
+            ttl_action: Action to take when TTL expires, either "stop" or "pause"
+        
+        Returns:
+            MorphSandbox: An initialized sandbox instance
+        
+        Raises:
+            InvalidSandboxSnapshotError: If the snapshot is not a valid sandbox environment
+        """
         sandbox = cls()
         
         if snapshot_id:
             console.print(f"[yellow]Starting sandbox from snapshot {snapshot_id}...[/yellow]")
-            sandbox.instance = await sandbox.client.instances.astart(snapshot_id)
-            console.print(f"[green]Instance started: {sandbox.instance.id}[/green]")
-            
-            # Wait for the instance to be ready
-            console.print("[yellow]Waiting for instance to be ready...[/yellow]")
-            await sandbox.instance.await_until_ready()
-            console.print("[green]Instance is ready![/green]")
+            try:
+                sandbox.instance = await sandbox.client.instances.astart(
+                    snapshot_id, 
+                    ttl_seconds=ttl_seconds, 
+                    ttl_action=ttl_action
+                )
+                console.print(f"[green]Instance started: {sandbox.instance.id}[/green]")
+                
+                if ttl_seconds:
+                    console.print(f"[yellow]Instance will {ttl_action} after {ttl_seconds} seconds[/yellow]")
+                
+                # Wait for the instance to be ready
+                console.print("[yellow]Waiting for instance to be ready...[/yellow]")
+                await sandbox.instance.await_until_ready()
+                console.print("[green]Instance is ready![/green]")
+                
+                # Verify the snapshot if requested
+                if verify:
+                    await sandbox._verify_snapshot_services()
+            except Exception as e:
+                # Clean up in case of error
+                if sandbox.instance:
+                    console.print("[yellow]Stopping instance due to error...[/yellow]")
+                    await sandbox.instance.astop()
+                    sandbox.instance = None
+                
+                # Raise a specific error
+                raise InvalidSandboxSnapshotError(
+                    f"Snapshot {snapshot_id} is not a valid sandbox: {str(e)}\n"
+                    "Please create a new sandbox with MorphSandbox.create()"
+                ) from e
         else:
             console.print("[yellow]Creating new sandbox from scratch...[/yellow]")
             snapshot = await sandbox._setup_jupyterlab_instance()
             
             # Start an instance from the snapshot
             console.print("[yellow]Starting instance from snapshot...[/yellow]")
-            sandbox.instance = await sandbox.client.instances.astart(snapshot.id)
+            sandbox.instance = await sandbox.client.instances.astart(
+                snapshot.id,
+                ttl_seconds=ttl_seconds,
+                ttl_action=ttl_action
+            )
             console.print(f"[green]Instance started: {sandbox.instance.id}[/green]")
+            
+            if ttl_seconds:
+                console.print(f"[yellow]Instance will {ttl_action} after {ttl_seconds} seconds[/yellow]")
             
             # Wait for instance to be ready
             console.print("[yellow]Waiting for instance to be ready...[/yellow]")
             await sandbox.instance.await_until_ready()
             console.print("[green]Instance is ready![/green]")
         
-        # Initialize Jupyter client
-        sandbox.jupyter_url = await sandbox.instance.aexpose_http_service("jupyterlab", 8888)
+        # Initialize Jupyter client by discovering the service
+        await sandbox._discover_services()
         sandbox.jupyter_client = JupyterNotebookClient(sandbox.jupyter_url)
-        await sandbox.jupyter_client.start()
+        
+        # Connect to existing kernels or start new ones
+        await sandbox.jupyter_client.connect_to_existing()
+        
+        # Capture the initial state
+        await sandbox._capture_state()
         
         return sandbox
+
+    
+    async def _verify_snapshot_services(self):
+        """Verify all required services are present and running."""
+        console.print("[yellow]Verifying sandbox snapshot...[/yellow]")
+        try:
+            # Check required files exist
+            result = await self.instance.aexec("""
+                test -f /root/start_jupyter.sh && \
+                test -d /root/notebooks && \
+                test -d /root/venv && \
+                systemctl is-active jupyter
+            """)
+            if result.exit_code != 0:
+                raise InvalidSandboxSnapshotError(
+                    f"Missing required files or services: {result.stdout} {result.stderr}"
+                )
+            console.print("[green]Required files and directories verified[/green]")
+
+            # Check JupyterLab is responding
+            result = await self.instance.aexec("curl -s http://localhost:8888/api/status")
+            if result.exit_code != 0:
+                console.print("[yellow]JupyterLab service not responding, attempting to restart...[/yellow]")
+                # Try restarting service
+                await self.instance.aexec("systemctl restart jupyter")
+                await asyncio.sleep(5)
+                
+                # Check again
+                result = await self.instance.aexec("curl -s http://localhost:8888/api/status")
+                if result.exit_code != 0:
+                    raise InvalidSandboxSnapshotError(
+                        f"JupyterLab service not responding after restart: {result.stdout} {result.stderr}"
+                    )
+            console.print("[green]JupyterLab service verified[/green]")
+
+            # Verify Python environment
+            result = await self.instance.aexec("""
+                source /root/venv/bin/activate && \
+                python3 -c "import jupyter_core; print('Jupyter installed')"
+            """)
+            if result.exit_code != 0 or "Jupyter installed" not in result.stdout:
+                raise InvalidSandboxSnapshotError(
+                    f"Python environment not valid: {result.stdout} {result.stderr}"
+                )
+            console.print("[green]Python environment verified[/green]")
+            
+            console.print("[green]Snapshot verification successful[/green]")
+
+        except Exception as e:
+            raise InvalidSandboxSnapshotError(f"Verification failed: {str(e)}")
+
+    async def _discover_services(self):
+        """Discover existing exposed services from snapshot."""
+        console.print("[yellow]Discovering exposed services...[/yellow]")
+        
+        # Get the list of HTTP services
+        services = self.instance.networking.http_services
+        
+        # Find JupyterLab service (typically on port 8888)
+        jupyter_service = next((s for s in services if s.port == 8888), None)
+        
+        if not jupyter_service:
+            console.print("[yellow]JupyterLab service not found, exposing it now...[/yellow]")
+            self.jupyter_url = await self.instance.aexpose_http_service("jupyterlab", 8888)
+        else:
+            self.jupyter_url = jupyter_service.url
+            
+        console.print(f"[green]JupyterLab service available at: {self.jupyter_url}[/green]")
+        
+        # Store all discovered services in state
+        self.state.exposed_services = {s.name: s.url for s in services}
+        
+        return self.jupyter_url
+
+
+    async def _capture_state(self):
+        """Capture current state of sandbox for monitoring/recovery."""
+        console.print("[yellow]Capturing sandbox state...[/yellow]")
+        
+        # Store Jupyter URL
+        self.state.jupyter_url = self.jupyter_url
+        
+        # Get active kernels
+        if self.jupyter_client:
+            self.state.active_kernels = await self.jupyter_client.kernel_manager.list_kernels()
+        
+        # Get installed packages
+        result = await self.instance.aexec(
+            "source /root/venv/bin/activate && pip freeze"
+        )
+        self.state.installed_packages = result.stdout.splitlines()
+        
+        console.print(f"[green]State captured: {len(self.state.active_kernels)} kernels, {len(self.state.installed_packages)} packages[/green]")
+        return self.state
     
     async def _setup_jupyterlab_instance(self):
         """Set up a JupyterLab instance in Morph and return the snapshot"""
@@ -896,34 +1110,55 @@ EOL
             
         return await self.jupyter_client.add_cell(notebook_path, content, cell_type, index)
     
-    async def execute_cell(self, notebook_path, cell_index):
+    async def execute_cell(self, notebook_path, cell_index, kernel_id=None):
         """Execute a specific cell in a notebook."""
         if not self.jupyter_client:
             raise ValueError("Jupyter client not initialized")
             
-        return await self.jupyter_client.execute_cell(notebook_path, cell_index)
+        return await self.jupyter_client.execute_cell(notebook_path, cell_index, kernel_id)
     
-    async def execute_notebook(self, notebook_path):
+    async def execute_notebook(self, notebook_path, kernel_id=None):
         """Execute all code cells in a notebook in order."""
         if not self.jupyter_client:
             raise ValueError("Jupyter client not initialized")
             
-        return await self.jupyter_client.execute_notebook(notebook_path)
+        return await self.jupyter_client.execute_notebook(notebook_path, kernel_id)
     
     async def list_kernels(self):
         """List all available kernels."""
         if not self.jupyter_client:
             raise ValueError("Jupyter client not initialized")
             
-        return await self.jupyter_client.list_kernels()
+        return await self.jupyter_client.kernel_manager.list_kernels()
+    
+    async def start_new_kernel(self, kernel_name="python3"):
+        """Start a new kernel and return its ID."""
+        if not self.jupyter_client:
+            raise ValueError("Jupyter client not initialized")
+            
+        return await self.jupyter_client.kernel_manager.start_new_kernel(kernel_name)
+    
+    async def restart_kernel(self, kernel_id=None):
+        """Restart specified kernel or default kernel."""
+        if not self.jupyter_client:
+            raise ValueError("Jupyter client not initialized")
+            
+        return await self.jupyter_client.kernel_manager.restart_kernel(kernel_id)
+    
+    async def interrupt_kernel(self, kernel_id=None):
+        """Interrupt specified kernel or default kernel."""
+        if not self.jupyter_client:
+            raise ValueError("Jupyter client not initialized")
+            
+        return await self.jupyter_client.kernel_manager.interrupt_kernel(kernel_id)
     
     # Direct code execution
-    async def execute_code(self, code):
+    async def execute_code(self, code, kernel_id=None):
         """Execute code directly using the kernel client."""
-        if not self.jupyter_client or not self.jupyter_client.kernel_client:
-            raise ValueError("Kernel client not initialized")
+        if not self.jupyter_client:
+            raise ValueError("Jupyter client not initialized")
             
-        return await self.jupyter_client.kernel_client.execute(code)
+        return await self.jupyter_client.execute_code(code, kernel_id)
     
     # File operations
     async def upload_file(self, local_path, remote_path, recursive=False):
@@ -1128,8 +1363,6 @@ EOL
             # Download: remote -> local
             remote_path = source[1:]  # Remove the leading ':'
             return await self.download_file(remote_path, destination, recursive=recursive)
-
-# Add these helper methods for additional file operations
 
     async def list_remote_files(self, remote_path):
         """List files in a remote directory.
