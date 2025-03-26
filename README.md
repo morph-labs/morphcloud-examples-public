@@ -29,6 +29,23 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 - Provides a complete fullstack development environment ready for use
 - Claude code setup instructions included for AI fullstack development
 
+### sandbox
+- Creates an environment for running Python-based demos and examples
+- Includes Jupyter notebook support for interactive exploration
+
+### emulator
+- Sets up a game emulation environment
+- Provides tools for interacting with emulated systems programmatically
+
+### mcp-devbox
+- Configures a development environment for working with Claude and MCP
+- Includes examples for Claude API integration and tools
+
+### browser
+- Provides a CDP-enabled browser automation environment on Morph Cloud
+- Includes the MorphBrowser class for managing browser instances
+- Features a shopping demo using browser-use and langchain-anthropic
+
 ## Prerequisites
 
 - A Morph Cloud [account](https://cloud.morph.so/docs/developers)
