@@ -35,6 +35,7 @@ asyncio.run(main())
 * **JupyterLab Environment Management:** Simplifies the lifecycle of JupyterLab instances on Morph Cloud, handling creation, startup, and shutdown.
 * **Jupyter Notebook Operations:** Provides methods for creating, modifying, and executing notebooks and individual cells.
 * **Direct Code Execution:** Supports executing Python code directly in the kernel without creating notebook cells.
+* **Data Visualization:** Captures and returns plot outputs from matplotlib and other visualization libraries.
 * **File Operations:** Offers comprehensive file management with upload, download, and manipulation capabilities.
 * **Service Management:** Manages additional services like Streamlit for dashboard creation.
 * **Snapshotting:** Allows you to create snapshots of environments, enabling you to save and restore configured sandbox states.
@@ -203,7 +204,62 @@ async def snapshot_example():
 asyncio.run(snapshot_example())
 ```
 
-**6. Integrate with Anthropic's Claude API**
+**6. Create and display plots**
+```python
+import asyncio
+from morph_sandbox import MorphSandbox
+
+async def plot_example():
+    # Use context manager for automatic cleanup
+    async with await MorphSandbox.create() as sandbox:
+        # Install matplotlib if needed
+        await sandbox.execute_code("import sys; !{sys.executable} -m pip install matplotlib numpy")
+        
+        # Python code that creates a plot using matplotlib
+        plot_code = """
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Generate data
+x = np.linspace(0, 10, 100)
+y = np.sin(x)
+
+# Create plot
+plt.figure(figsize=(10, 6))
+plt.plot(x, y, 'b-', linewidth=2)
+plt.title('Sine Wave')
+plt.xlabel('x')
+plt.ylabel('sin(x)')
+plt.grid(True)
+
+# Show the plot - MorphSandbox automatically captures plot outputs
+plt.show()
+        """
+        
+        # Execute the code
+        result = await sandbox.execute_code(plot_code)
+        
+        # Check if we have images in the result
+        if "images" in result:
+            images = result["images"]
+            print(f"Successfully captured {len(images)} images!")
+            
+            # Save the first image if it's a PNG
+            if len(images) > 0 and images[0]["mime_type"] == "image/png":
+                import base64
+                
+                # Save image to file
+                image_path = "plot_1.png"
+                img_data = base64.b64decode(images[0]["data"])
+                with open(image_path, "wb") as f:
+                    f.write(img_data)
+                print(f"Saved image to {image_path}")
+
+# Run the example
+asyncio.run(plot_example())
+```
+
+**7. Integrate with Anthropic's Claude API**
 ```python
 # pip install anthropic morph_sandbox
 import asyncio

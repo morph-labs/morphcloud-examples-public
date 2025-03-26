@@ -201,6 +201,7 @@ class JupyterKernelManager:
         await ws.send(json.dumps(msg, cls=JupyterMessageEncoder))
         
         outputs = []
+        images = []  # New list to collect image data
         execution_count = None
         status = 'ok'
         got_execute_input = False
@@ -245,12 +246,64 @@ class JupyterKernelManager:
                     data = response_data.get('content', {}).get('data', {})
                     text = data.get('text/plain', '')
                     outputs.append(text)
+                    
+                    # Check for image data
+                    if 'image/png' in data:
+                        image_data = data.get('image/png', '')
+                        metadata = response_data.get('content', {}).get('metadata', {})
+                        images.append({
+                            'mime_type': 'image/png',
+                            'data': image_data,
+                            'metadata': metadata
+                        })
+                    elif 'image/jpeg' in data:
+                        image_data = data.get('image/jpeg', '')
+                        metadata = response_data.get('content', {}).get('metadata', {})
+                        images.append({
+                            'mime_type': 'image/jpeg',
+                            'data': image_data,
+                            'metadata': metadata
+                        })
+                    elif 'image/svg+xml' in data:
+                        image_data = data.get('image/svg+xml', '')
+                        metadata = response_data.get('content', {}).get('metadata', {})
+                        images.append({
+                            'mime_type': 'image/svg+xml',
+                            'data': image_data,
+                            'metadata': metadata
+                        })
                 
                 elif msg_type == 'display_data':
                     got_output = True
                     data = response_data.get('content', {}).get('data', {})
                     text = data.get('text/plain', '')
                     outputs.append(text)
+                    
+                    # Check for image data
+                    if 'image/png' in data:
+                        image_data = data.get('image/png', '')
+                        metadata = response_data.get('content', {}).get('metadata', {})
+                        images.append({
+                            'mime_type': 'image/png',
+                            'data': image_data,
+                            'metadata': metadata
+                        })
+                    elif 'image/jpeg' in data:
+                        image_data = data.get('image/jpeg', '')
+                        metadata = response_data.get('content', {}).get('metadata', {})
+                        images.append({
+                            'mime_type': 'image/jpeg',
+                            'data': image_data,
+                            'metadata': metadata
+                        })
+                    elif 'image/svg+xml' in data:
+                        image_data = data.get('image/svg+xml', '')
+                        metadata = response_data.get('content', {}).get('metadata', {})
+                        images.append({
+                            'mime_type': 'image/svg+xml',
+                            'data': image_data,
+                            'metadata': metadata
+                        })
                 
                 elif msg_type == 'error':
                     got_output = True
@@ -275,12 +328,18 @@ class JupyterKernelManager:
                 console.print(f"[red]Error processing message: {e}[/red]")
                 break
         
+        # Create result dictionary with basic fields
         result = {
             'status': status,
             'execution_count': execution_count,
             'output': '\n'.join(outputs).strip(),
             'kernel_id': kernel_id
         }
+        
+        # Only add images field if we have images
+        if images:
+            result['images'] = images
+            console.print(f"[green]Captured {len(images)} image(s)[/green]")
         
         if result['status'] == 'ok':
             console.print("[green]Execution completed successfully[/green]")
