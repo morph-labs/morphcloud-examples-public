@@ -8,10 +8,30 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 
 ## Examples
 
+### sandbox
+- Creates an environment for running AI code in a sandbox environment
+- Implements a Jupyter environment that can be interacted with
+- Features a stock analysis demo using the openai-agents sdk 
+
+### browser
+- Provides a CDP-enabled browser automation environment on Morph Cloud
+- Includes the MorphBrowser class for managing browser instances
+- Features a shopping demo using browser-use and langchain-anthropic
+
 ### remote-desktop
 - Sets up a VM with XFCE4 desktop environment accessible via web browser
 - Uses TigerVNC + noVNC for browser-based remote desktop access
 - No VNC client required - just open the provided URL
+
+### fullstack-devbox
+- Sets up a Bun development environment with integrated PostgreSQL
+- Includes a React Todo app demo with Bun's HMR (Hot Module Reloading)
+- Provides a complete fullstack development environment ready for use with claude code
+
+### emulator
+- Sets up an environment with an emulator
+- Provides tools for interacting with the emulator programmatically
+- Also includes generic computer use interaction
 
 ### openvscode-server
 - Creates a VM running OpenVSCode Server in a Docker container
@@ -23,28 +43,9 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 - Enables accelerated container builds with caching
 - Optimized for efficient CI/CD pipelines and container workflows
 
-### fullstack-devbox
-- Sets up a Bun development environment with integrated PostgreSQL
-- Includes a React Todo app demo with Bun's HMR (Hot Module Reloading)
-- Provides a complete fullstack development environment ready for use
-- Claude code setup instructions included for AI fullstack development
-
-### sandbox
-- Creates an environment for running Python-based demos and examples
-- Includes Jupyter notebook support for interactive exploration
-
-### emulator
-- Sets up a game emulation environment
-- Provides tools for interacting with emulated systems programmatically
-
 ### mcp-devbox
-- Configures a development environment for working with Claude and MCP
+- Configures a development environment for working with Claude and MCP servers
 - Includes examples for Claude API integration and tools
-
-### browser
-- Provides a CDP-enabled browser automation environment on Morph Cloud
-- Includes the MorphBrowser class for managing browser instances
-- Features a shopping demo using browser-use and langchain-anthropic
 
 ## Prerequisites
 
@@ -61,6 +62,6 @@ Each example has its own directory with a detailed README and setup script.
 
 ## Resources
 
-- [Morph Cloud Documentation](https://cloud.morph.so/docs/developers)
+- [Morph Cloud Documentation](https://cloud.morph.so/docs/documentation/overview)
 - [Morph Cloud Python SDK](https://github.com/morph-labs/morph-python-sdk/)
 - [Morph Cloud Typescript SDK](https://github.com/morph-labs/morph-typescript-sdk/)
