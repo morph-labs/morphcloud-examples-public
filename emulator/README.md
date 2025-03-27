@@ -6,29 +6,91 @@ This project demonstrates how to use Morph Cloud to create a fully autonomous ag
 
 ## Getting Started
 
-1. Install dependencies:
-   ```
-   pip install anthropic morphcloud
-   ```
-   
-   You can also use `uv` to automatically download dependencies:
-   ```
-   uv pip install anthropic morphcloud
+### Requirements
+
+- Python 3.10 or higher is required
+
+### Setup Environment
+
+#### Option 1: Using `uv` (recommended)
+
+The scripts in this project have dependencies embedded in comments, so `uv run` will automatically download them for you.
+
+1. Install `uv` by following the [official installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+
+2. Run the scripts directly with `uv`:
+   ```bash
+   uv run emulator_setup_rom.py --rom path/to/your/rom.gb
+   uv run emu_agent.py --snapshot your_snapshot_id
    ```
 
-2. Set your API keys:
+#### Option 2: Using your preferred virtual environment
+
+1. Create a Python virtual environment:
+   ```bash
+   # Using venv
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   
+   # OR using conda
+   conda create -n emulator python=3.10
+   conda activate emulator
    ```
+
+2. Install dependencies:
+   ```bash
+   # Using the requirements.txt file
+   pip install -r requirements.txt
+   
+   # OR manually
+   pip install anthropic morphcloud python-dotenv
+   ```
+
+### Configuration
+
+1. Set up your API keys by either:
+
+   **Option A: Using environment variables**
+   ```bash
    export ANTHROPIC_API_KEY="your_api_key"
    export MORPH_API_KEY="your_morph_api_key"
    ```
 
-3. Run the emulator setup with your ROM file:
-   ```
-   python emulator/emulator_setup_rom.py --rom path/to/your/rom.gb
+   **Option B: Using a .env file (recommended)**
+   ```bash
+   # Copy the example file
+   cp .env.example .env
+   
+   # Edit the .env file with your actual API keys
+   nano .env  # or use any text editor
    ```
 
-4. Run the agent using the snapshot ID from the setup:
+2. **Getting API Keys:**
+   - **Morph API Key**: Generate your API key at [cloud.morph.so/web/keys](https://cloud.morph.so/web/keys)
+   - **Anthropic API Key**: Get your API key from [Anthropic Console](https://console.anthropic.com/)
+
+3. **Learn More:**
+   - [Morph Cloud Documentation](https://cloud.morph.so/docs/documentation/overview) - Learn how to use Morph Cloud
+   - [Morph Python SDK](https://github.com/morph-labs/morph-python-sdk) - Documentation for the Python SDK
+
+### Running the Emulator
+
+1. Run the emulator setup with your ROM file:
+   ```bash
+   # If using uv:
+   uv run emulator_setup_rom.py --rom path/to/your/rom.gb
+   
+   # If using a virtual environment:
+   python emulator_setup_rom.py --rom path/to/your/rom.gb
    ```
+   The script will output a snapshot ID when complete. Make note of this ID.
+
+2. Run the agent using the snapshot ID from the setup:
+   ```bash
+   # If using uv:
+   uv run emu_agent.py --snapshot your_snapshot_id --turns 100
+   
+   # If using a virtual environment:
    python emu_agent.py --snapshot your_snapshot_id --turns 100
    ```
 
@@ -95,9 +157,12 @@ with EmuAgent(snapshot_id=snapshot.id) as agent:
     agent.play(max_turns=100)
 ```
 
-## Try Morph Cloud
+## Resources
 
-Visit [cloud.morph.so/web](https://cloud.morph.so/web) to get started.
+- **Morph Cloud**: [cloud.morph.so/web](https://cloud.morph.so/web) - Sign up for Morph Cloud
+- **API Keys**: [cloud.morph.so/web/keys](https://cloud.morph.so/web/keys) - Manage your Morph Cloud API keys
+- **Documentation**: [cloud.morph.so/docs](https://cloud.morph.so/docs/documentation/overview) - Comprehensive Morph Cloud documentation
+- **SDK**: [GitHub: morph-python-sdk](https://github.com/morph-labs/morph-python-sdk) - Learn more about the Python SDK used in this project
 
 ## Legal Notice
 

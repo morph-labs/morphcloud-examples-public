@@ -1,7 +1,8 @@
 # /// script
 # dependencies = [
 # "morphcloud",
-# "anthropic"
+# "anthropic",
+# "python-dotenv"
 # ]
 # ///
 
@@ -12,10 +13,17 @@ import base64
 import anthropic
 import logging
 import re
+from pathlib import Path
+from dotenv import load_dotenv
 from typing import Optional, Dict, Any, List
 
 # Import MorphComputer from local file
 from morph_computer import MorphComputer
+
+# Load environment variables from .env file if it exists
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

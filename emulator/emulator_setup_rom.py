@@ -1,6 +1,7 @@
 # /// script
 # dependencies = [
 # "morphcloud",
+# "python-dotenv"
 # ]
 # ///
 
@@ -14,7 +15,14 @@ import os
 import sys
 import time
 import argparse
+from pathlib import Path
+from dotenv import load_dotenv
 from morphcloud.api import MorphCloudClient
+
+# Load environment variables from .env file if it exists
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 def parse_arguments():
     """Parse command line arguments"""
@@ -164,8 +172,8 @@ def main():
     # Create or get a base snapshot with reasonable specs
     print("\n=== 🔍 Finding or creating base snapshot ===")
     snapshots = client.snapshots.list(
-        digest="emulator-base-snapshot",
-        metadata={"purpose": "emulator-environment"}
+        digest="emulator-snapshot",
+        metadata={"purpose": "emulator"}
     )
     
     if snapshots:
@@ -174,11 +182,11 @@ def main():
     else:
         print("⏳ Creating new base snapshot...")
         base_snapshot = client.snapshots.create(
-            vcpus=4,
-            memory=4096,
+            vcpus=2,
+            memory=8192,
             disk_size=8192,
-            digest="emulator-base-snapshot",
-            metadata={"purpose": "emulator-environment"}
+            digest="emulator-snapshot",
+            metadata={"purpose": "emulator"}
         )
         print(f"✅ Created new base snapshot: {base_snapshot.id}")
     

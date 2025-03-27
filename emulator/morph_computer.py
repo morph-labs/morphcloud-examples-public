@@ -1,6 +1,7 @@
 # /// script
 # dependencies = [
-# "morphcloud"
+# "morphcloud",
+# "python-dotenv"
 # ]
 # ///
 
@@ -10,8 +11,16 @@ import shlex
 import time
 import base64
 import io
+import os
 import traceback
+from pathlib import Path
+from dotenv import load_dotenv
 from morphcloud.api import MorphCloudClient
+
+# Load environment variables from .env file if it exists
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 class MorphComputer:
     """
