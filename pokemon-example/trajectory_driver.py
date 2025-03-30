@@ -66,6 +66,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             grid-template-columns: 30% 70%;
             flex: 1;
             overflow: hidden;
+            height: calc(100vh - 160px);
         }
 
         .chat-container {
@@ -130,19 +131,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             border: 1px solid #333;
             position: relative;
             overflow: hidden;
+            min-height: 500px;
         }
 
         iframe {
             position: absolute;
             width: 1200px; 
-            height: 800px;
+            height: 1200px;
             border: none;
-            top: -100px;
-            left: -300px;
+            top: -400px;
+            left: 0px;
         }
 
         .controls-container {
-            padding: 1rem;
+            padding: 0.5rem;
             border-top: 1px solid #333;
         }
 
@@ -191,7 +193,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
 
         .form-group {
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
         }
 
         label {
@@ -214,7 +216,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             padding: 1rem;
             overflow-x: auto;
             white-space: nowrap;
-            height: 100px;
+            height: 80px;
         }
 
         .snapshot-item {
@@ -254,6 +256,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             margin-top: 1rem;
             border-top: 1px solid #333;
             padding-top: 1rem;
+            max-height: 200px;
         }
         
         .trajectory-step {
@@ -758,8 +761,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         fetchData();
     </script>
 </body>
-</html>
-"""
+</html>"""
 
 # ------------------------------------------------------------------------------
 # Handler

@@ -1,6 +1,92 @@
 # tasks.py
-from typing import Dict, Any, List, Callable, Optional
+from typing import Dict, Any, List, Callable, Optional, Sequence
 from dataclasses import dataclass, field
+from eva import (
+    Instance, VerificationResult, VerifiedTask, Agent, run, 
+    MorphInstance, log, LogLevel
+)
+
+
+class PokemonVerifiedTask(VerifiedTask[Dict[str, Any], str, bool, Dict[str, Any]]):
+    """A task for a Pokemon game goal verified by checking game state."""
+    
+    @staticmethod
+    def create(
+        instruction: str,
+        snapshot_id: str,
+        verification_function: Callable[[Dict[str, Any]], bool],
+        verification_message: str,
+        metadata: Optional[Dict[str, str]] = None
+    ) -> 'PokemonVerifiedTask':
+        """
+        Create a Pokemon verified task.
+        
+        Args:
+            instruction: The goal to accomplish in Pokemon
+            snapshot_id: The MorphCloud snapshot ID to start from
+            verification_function: Function that determines if the goal was achieved
+            verification_message: Message explaining what constitutes success
+            metadata: Optional metadata for the task
+            
+        Returns:
+            A PokemonVerifiedTask instance
+        """
+        log(LogLevel.INFO, f"Creating Pokemon task: {instruction}", 
+            extra={"snapshot_id": snapshot_id, "verification_message": verification_message})
+        
+        def pokemon_verifier(state: Instance[Dict[str, Any], Dict[str, Any]], 
+                          actions: Sequence[str]) -> VerificationResult[bool]:
+            log(LogLevel.INFO, f"Verifying Pokemon task", 
+                extra={"task": instruction, "action_count": len(actions)})
+            
+            # Extract game state from the Instance
+            game_state = state.state.get("game_state", {})
+            log(LogLevel.INFO, f"Game state summary", 
+                extra={"game_state": game_state, "action_count": len(actions)})
+            
+            # Check if the goal is achieved using the verification function
+            try:
+                success = verification_function(game_state)
+                
+                if success:
+                    log(LogLevel.SUCCESS, f"Goal achieved", 
+                        extra={"task": instruction, "actions_taken": len(actions)})
+                    return VerificationResult(
+                        value=True,
+                        success=True,
+                        message=f"Goal achieved: {instruction}",
+                        details={
+                            "actions_taken": len(actions)
+                        }
+                    )
+                else:
+                    log(LogLevel.INFO, f"Goal not yet achieved", 
+                        extra={"task": instruction, "verification_message": verification_message})
+                    return VerificationResult(
+                        value=False,
+                        success=False,
+                        message=f"Goal not yet achieved: {instruction}",
+                        details={
+                            "verification_message": verification_message
+                        }
+                    )
+            except Exception as e:
+                log(LogLevel.ERROR, f"Error in verification", 
+                    extra={"error": str(e), "task": instruction})
+                return VerificationResult(
+                    value=False,
+                    success=False,
+                    message=f"Verification error: {str(e)}",
+                    details={"error": str(e)}
+                )
+            
+        return PokemonVerifiedTask(
+            instruction=instruction,
+            snapshot_id=snapshot_id,
+            verifier=pokemon_verifier,
+            metadata=metadata or {}
+        )
+
 
 # ============= Verification Functions =============
 
@@ -161,7 +247,6 @@ def create_pokemon_verified_task(task_id: str, snapshot_id: str = None):
     
     # Import dynamically to avoid circular imports
     # This assumes this is called in a context where PokemonVerifiedTask is available
-    from pokemon_eva_agent import PokemonVerifiedTask
     
     return PokemonVerifiedTask.create(
         instruction=task_def.instruction,

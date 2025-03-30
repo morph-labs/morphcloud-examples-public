@@ -5,7 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable, Sequence, Union, TypeVar, Generic, Tuple
-from tasks import create_pokemon_verified_task, get_task_by_id, REGISTERED_TASKS
+from tasks import create_pokemon_verified_task, get_task_by_id, REGISTERED_TASKS, PokemonVerifiedTask
+
 
 
 from anthropic import Anthropic
@@ -31,85 +32,6 @@ EVENT_TOOL_RESULT = "tool_result"
 EVENT_CLAUDE_TEXT = "claude_text"
 EVENT_TRAJECTORY_UPDATED = "trajectory_updated"
 
-class PokemonVerifiedTask(VerifiedTask[Dict[str, Any], str, bool, Dict[str, Any]]):
-    """A task for a Pokemon game goal verified by checking game state."""
-    
-    @staticmethod
-    def create(
-        instruction: str,
-        snapshot_id: str,
-        verification_function: Callable[[Dict[str, Any]], bool],
-        verification_message: str,
-        metadata: Optional[Dict[str, str]] = None
-    ) -> 'PokemonVerifiedTask':
-        """
-        Create a Pokemon verified task.
-        
-        Args:
-            instruction: The goal to accomplish in Pokemon
-            snapshot_id: The MorphCloud snapshot ID to start from
-            verification_function: Function that determines if the goal was achieved
-            verification_message: Message explaining what constitutes success
-            metadata: Optional metadata for the task
-            
-        Returns:
-            A PokemonVerifiedTask instance
-        """
-        log(LogLevel.INFO, f"Creating Pokemon task: {instruction}", 
-            extra={"snapshot_id": snapshot_id, "verification_message": verification_message})
-        
-        def pokemon_verifier(state: Instance[Dict[str, Any], Dict[str, Any]], 
-                          actions: Sequence[str]) -> VerificationResult[bool]:
-            log(LogLevel.INFO, f"Verifying Pokemon task", 
-                extra={"task": instruction, "action_count": len(actions)})
-            
-            # Extract game state from the Instance
-            game_state = state.state.get("game_state", {})
-            log(LogLevel.INFO, f"Game state summary: {game_state}", 
-                extra={"game_state": game_state, "action_count": len(actions)})
-            
-            # Check if the goal is achieved using the verification function
-            try:
-                success = verification_function(game_state)
-                
-                if success:
-                    log(LogLevel.SUCCESS, f"Goal achieved", 
-                        extra={"task": instruction, "actions_taken": len(actions)})
-                    return VerificationResult(
-                        value=True,
-                        success=True,
-                        message=f"Goal achieved: {instruction}",
-                        details={
-                            "actions_taken": len(actions)
-                        }
-                    )
-                else:
-                    log(LogLevel.INFO, f"Goal not yet achieved", 
-                        extra={"task": instruction, "verification_message": verification_message})
-                    return VerificationResult(
-                        value=False,
-                        success=False,
-                        message=f"Goal not yet achieved: {instruction}",
-                        details={
-                            "verification_message": verification_message
-                        }
-                    )
-            except Exception as e:
-                log(LogLevel.ERROR, f"Error in verification", 
-                    extra={"error": str(e), "task": instruction})
-                return VerificationResult(
-                    value=False,
-                    success=False,
-                    message=f"Verification error: {str(e)}",
-                    details={"error": str(e)}
-                )
-            
-        return PokemonVerifiedTask(
-            instruction=instruction,
-            snapshot_id=snapshot_id,
-            verifier=pokemon_verifier,
-            metadata=metadata or {}
-        )
 
 @dataclass
 class PokemonTrajectoryStep(TrajectoryStep[Dict[str, Any], str, bool, str]):
@@ -172,8 +94,11 @@ class PokemonTrajectory(Trajectory[Dict[str, Any], str, bool, str]):
                     location = line.replace("Location:", "").strip()
                     break
         
-        # Create snapshot (gets snapshot ID)
-        snapshot_id = state.snapshot()
+        # Get the current step index
+        current_step_index = len(self.steps)
+        
+        # Create snapshot (gets snapshot ID) with the current step index
+        snapshot_id = state.snapshot(step_index=current_step_index)
         
         # Create specialized step
         step = PokemonTrajectoryStep(
@@ -276,8 +201,12 @@ class PokemonInstance(Instance[Dict[str, Any], str]):
         super().__init__(state)
         self._morph_instance = morph_instance
     
-    def snapshot(self) -> str:
-        """Create a snapshot and return the ID for visualization and rollback."""
+    def snapshot(self, step_index: int = 0) -> str:
+        """Create a snapshot and return the ID for visualization and rollback.
+        
+        Args:
+            step_index: The current step index in the trajectory
+        """
         morph_instance = getattr(self.state, '_morph_instance', None) or self._morph_instance
         
         if morph_instance:
@@ -289,7 +218,7 @@ class PokemonInstance(Instance[Dict[str, Any], str]):
                 metadata = {
                     "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                     "action": self.state.get("last_action", ""),
-                    "step_index": str(len(getattr(morph_instance, '_trajectory', []))),
+                    "step_index": str(step_index),
                 }
                 
                 # Add game state summary to metadata
@@ -307,7 +236,7 @@ class PokemonInstance(Instance[Dict[str, Any], str]):
                     extra={
                         "event_type": EVENT_SNAPSHOT_CREATED, 
                         "snapshot_id": snapshot_id, 
-                        "step_count": str(len(getattr(morph_instance, '_trajectory', [])))
+                        "step_index": metadata.get("step_index", "0")
                     })
                 
                 return snapshot_id
