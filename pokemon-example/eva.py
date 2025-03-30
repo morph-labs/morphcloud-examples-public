@@ -399,8 +399,12 @@ async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_step
         if hasattr(initial_state.state, '_morph_instance'):
             object.__setattr__(initial_state.state, '_morph_instance', morph_instance)
         
-        trajectory = Trajectory[S, A, R, T]()
-        agent.trajectory = trajectory
+        if hasattr(agent, 'trajectory') and agent.trajectory is not None:
+            trajectory = agent.trajectory
+        else:
+            trajectory = Trajectory[S, A, R, T]()
+            agent.trajectory = trajectory
+
         
         # Bind the agent to the instance
         if hasattr(agent, 'bind_instance'):
@@ -587,7 +591,7 @@ class MorphInstance:
             
             log(LogLevel.SUCCESS, f"Set metadata on snapshot {snapshot_id}")
         except Exception as e:
-            log(LogLevel.ERROR, f"Failed to set metadata on snapshot {snapshot_id}", 
+            log(LogLevel.ERROR, f"Failed to set metadata on snapshot {snapshot_id}: {e}", 
                 extra={"error": str(e)})
             import traceback
             log(LogLevel.ERROR, f"Metadata error traceback", 
@@ -618,5 +622,11 @@ class MorphInstance:
     
     def __del__(self) -> None:
         """Ensure the instance is stopped when this object is garbage collected."""
-        self.stop()
+        try:
+            if hasattr(self, 'instance') and self.instance:
+                self.stop()
+        except (AttributeError, Exception):
+            # Ignore errors during garbage collection
+            pass
+
 

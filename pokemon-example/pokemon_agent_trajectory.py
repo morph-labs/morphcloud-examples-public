@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable, Sequence, Union, TypeVar, Generic, Tuple
+from tasks import create_pokemon_verified_task, get_task_by_id, REGISTERED_TASKS
+
 
 from anthropic import Anthropic
 
@@ -970,6 +972,8 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
 
 # HTTP API for the driver to communicate with the agent
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+
 import uvicorn
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -983,6 +987,7 @@ class AgentRequest(BaseModel):
     snapshot_id: str
     steps: int = 100
     objective: str = "Explore the Pokemon world"
+    task_id: str = ""
 
 class PokemonAPI:
     """API for the driver to communicate with the Pokemon agent."""
@@ -992,6 +997,15 @@ class PokemonAPI:
         self.host = host
         self.port = port
         self.app = FastAPI(title="Pokemon Agent API")
+
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],        # or ["*"] to allow all
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],)
+
+        
         self.agent = None
         self.task = None
         self.morph_instance = None
@@ -1008,6 +1022,24 @@ class PokemonAPI:
             """Root endpoint."""
             return {"message": "Pokemon Agent API"}
         
+        @self.app.get("/tasks")
+        async def list_tasks():
+            """
+            Return a list of all registered tasks that the user can choose from.
+            Each task is converted to a dictionary for easy JSON serialization.
+            """
+            return [
+                {
+                    "id": task.id,
+                    "instruction": task.instruction,
+                    "verification_fn_name": task.verification_fn_name,
+                    "verification_message": task.verification_message,
+                    "metadata": task.metadata,
+                }
+                for task in REGISTERED_TASKS
+            ]
+
+
         @self.app.get("/status")
         async def get_status():
             """Get agent status."""
@@ -1037,10 +1069,12 @@ class PokemonAPI:
             try:
                 background_tasks.add_task(
                     self.run_agent_task, 
-                    snapshot_id=request.snapshot_id,
-                    steps=request.steps,
-                    objective=request.objective
+                    request.snapshot_id,
+                    request.steps,
+                    request.task_id,
+                    request.objective
                 )
+
                 return {"success": True, "message": "Agent started"}
             except Exception as e:
                 log(LogLevel.ERROR, f"Failed to start agent", extra={"error": str(e)})
@@ -1119,89 +1153,83 @@ class PokemonAPI:
                 log(LogLevel.ERROR, f"Failed to stop agent", extra={"error": str(e)})
                 return {"success": False, "error": str(e)}
     
-    async def run_agent_task(self, snapshot_id: str, steps: int, objective: str):
-        """Run the agent task in the background."""
+    async def run_agent_task(self, snapshot_id: str, steps: int, task_id: Optional[str], objective: str):
+        """
+        The background task that actually:
+        1. Creates the MorphInstance from the snapshot.
+        2. Connects to MCP.
+        3. Creates the PokemonAgent.
+        4. Builds the PokemonVerifiedTask (if task_id is provided), or fallback task if not.
+        5. Calls eva.run(...) and blocks until done or steps exhausted.
+        """
+
+        # logger.info(f"run_agent_task started with snapshot_id={snapshot_id}, steps={steps}, task_id={task_id}")
+
         try:
-            self.running_task = True
-            
-            # Create Pokemon MCP task
-            from pokemon_eva_agent import PokemonVerifiedTask
-            
-            # Define a basic verification function for testing
-            def verify_step(game_state: Dict[str, Any]) -> bool:
-                """Always return True for testing."""
-                return True
-            
-            # Create the task
-            self.task = PokemonVerifiedTask.create(
-                instruction=objective,
-                snapshot_id=snapshot_id,
-                verification_function=verify_step,
-                verification_message="Task in progress",
-                metadata={"game": "Pokemon Red", "objective": objective}
-            )
-            
-            # Start MorphVM instance
-            log(LogLevel.INFO, f"Starting MorphVM instance", 
-                extra={"snapshot_id": snapshot_id})
+            # 1. Launch MorphInstance
             self.morph_instance = MorphInstance(
                 snapshot_id=snapshot_id,
                 metadata={"purpose": "pokemon_game_server"},
-                ttl_seconds=7200  # 2-hour TTL
+                ttl_seconds=3600
             )
-            
-            # Get MCP URL
-            mcp_url = self.morph_instance.instance.expose_http_service(
-                name="mcp",
-                port=8000  # Assuming MCP server runs on port 8000 inside the VM
-            )
-            
-            log(LogLevel.SUCCESS, f"MCP server exposed", 
-                extra={"mcp_url": mcp_url})
-            
-            # Expose NoVNC for the UI
-            novnc_url = self.morph_instance.instance.expose_http_service(
-                name="novnc",
-                port=6080
-            )
-            
-            log(LogLevel.INFO, f"NoVNC service available", 
-                extra={"event_type": "novnc_url", "url": f"{novnc_url}/vnc_lite.html"})
-            
-            # Create MCP handler
+
+            # 2. Expose MCP on port 8000 inside the VM
+            mcp_url = self.morph_instance.instance.expose_http_service(name="mcp", port=8000)
+            # logger.info(f"MCP server exposed at: {mcp_url}")
+
+            # 3. Connect NoVNC (just for your reference, not strictly required)
+            novnc_url = self.morph_instance.instance.expose_http_service(name="novnc", port=6080)
+            # logger.info(f"NoVNC (VNC) at: {novnc_url}/vnc_lite.html")
+
+            # 4. Create MCP handler
             mcp_handler = PokemonMCPHandler(f"{mcp_url}/sse")
             connected = await mcp_handler.connect()
-            
             if not connected:
-                log(LogLevel.ERROR, "Failed to connect to MCP server")
-                self.running_task = False
+                # logger.error("Failed to connect to MCP server")
                 return
-            
-            # Create the agent
+
+            # 5. Create the agent
             self.agent = PokemonAgent(mcp_handler=mcp_handler)
             
-            # Set the objective
-            self.agent.set_objective(objective)
-            
-            # Run the agent
+            # Decide which VerifiedTask to run
+            if task_id:
+                # Use a real task from tasks.py
+                self.running_task = create_pokemon_verified_task(task_id, snapshot_id)
+                # The agent's "objective" might be the instruction from the actual task:
+                self.agent.set_objective(self.running_task.instruction)
+            else:
+                # Fallback: create a trivial verification or use the 'objective' string
+                # logger.warning("No task_id provided. Using trivial verification function.")
+                def dummy_verify_func(gs: Dict[str, Any]) -> bool:
+                    return False  # Always returns false => never completes
+                self.running_task = PokemonVerifiedTask.create(
+                    instruction=objective,
+                    snapshot_id=snapshot_id,
+                    verification_function=dummy_verify_func,
+                    verification_message="No real verification in place",
+                    metadata={"game": "Pokemon Red", "objective": objective}
+                )
+                self.agent.set_objective(objective)
+
+            # 6. Run the agent with E.V.A.
+            # logger.info(f"Starting E.V.A. run() for task: {self.running_task.instruction}")
             from eva import run
-            result, _ = await run(
-                task=self.task,
+            result, trajectory = await run(
+                task=self.running_task,
                 agent=self.agent,
                 max_steps=steps,
                 verify_every_step=True,
-                ttl_seconds=7200  # 2-hour TTL
+                ttl_seconds=3600
             )
-            
-            log(LogLevel.INFO, "Agent task completed", 
-                extra={"success": result.success, "message": result.message})
+
+            # logger.info(f"Agent run complete. success={result.success}, message={result.message}")
             
         except Exception as e:
-            log(LogLevel.ERROR, f"Error running agent task", extra={"error": str(e)})
-            import traceback
-            log(LogLevel.ERROR, f"Error traceback", extra={"traceback": traceback.format_exc()})
+            print(e)
+            # logger.exception("Error in run_agent_task")
         finally:
-            self.running_task = False
+            self.background_task_active = False
+
     
     async def rollback_to_step(self, step_index: int):
         """Roll back to a specific step."""
@@ -1369,25 +1397,16 @@ async def run_pokemon_without_api(snapshot_id: str, steps: int = 100):
     
     
     # Create the task
-    brock_task = PokemonVerifiedTask.create(
-            instruction="Defeat Brock at Pewter Gym and obtain the Boulder Badge",
-            snapshot_id=snapshot_id,
-            verification_function=verify_beat_first_gym,
-            verification_message="Defeat Brock to acquire the Boulder Badge.",
-            metadata={"game": "Pokemon Red", "objective": "first_gym"}
-        )
-
-    moon_task = PokemonVerifiedTask.create(
-            instruction="Navigate through Mount Moon and exit to Route 4",
-            snapshot_id=snapshot_id,
-            verification_function=verify_left_mount_moon,
-            verification_message="You must exit Mt. Moon and reach Route 4 or Cerulean City.",
-            metadata={"game": "Pokemon Red", "objective": "mount_moon"}
-        )
+    task_def = get_task_by_id("escape-mt-moon")
+    print(f"Running task: {task_def.instruction}")
     
+    # Create the task with a snapshot ID
+    moon_task = create_pokemon_verified_task("escape-mt-moon", snapshot_id)
+
     # Start MorphVM instance
     log(LogLevel.INFO, f"Starting MorphVM instance", 
         extra={"snapshot_id": snapshot_id})
+    
     morph_instance = MorphInstance(
         snapshot_id=snapshot_id,
         metadata={"purpose": "pokemon_game_server"},
@@ -1435,7 +1454,7 @@ async def run_pokemon_without_api(snapshot_id: str, steps: int = 100):
         # Run the agent
         from eva import run
         result, _ = await run(
-            task=brock_task,
+            task=moon_task,
             agent=agent,
             max_steps=steps,
             verify_every_step=True,
