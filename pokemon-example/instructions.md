@@ -6,6 +6,7 @@ uv pip install dotenv
 uv pip install morphcloud
 uv pip install pillow
 uv pip install mcp
+uv pip install fastapi
 
 # if you do not have a snapshot
 uv run setup_romwatch_server.py 
