@@ -94,11 +94,8 @@ class PokemonTrajectory(Trajectory[Dict[str, Any], str, bool, str]):
                     location = line.replace("Location:", "").strip()
                     break
         
-        # Get the current step index
-        current_step_index = len(self.steps)
-        
-        # Create snapshot (gets snapshot ID) with the current step index
-        snapshot_id = state.snapshot(step_index=current_step_index)
+        # Create snapshot (gets snapshot ID)
+        snapshot_id = state.snapshot()
         
         # Create specialized step
         step = PokemonTrajectoryStep(
@@ -205,12 +202,8 @@ class PokemonInstance(Instance[Dict[str, Any], str]):
         super().__init__(state)
         self._morph_instance = morph_instance
     
-    def snapshot(self, step_index: int = 0) -> str:
-        """Create a snapshot and return the ID for visualization and rollback.
-        
-        Args:
-            step_index: The current step index in the trajectory
-        """
+    def snapshot(self) -> str:
+        """Create a snapshot and return the ID for visualization and rollback."""
         morph_instance = getattr(self.state, '_morph_instance', None) or self._morph_instance
         
         if morph_instance:
@@ -222,7 +215,6 @@ class PokemonInstance(Instance[Dict[str, Any], str]):
                 metadata = {
                     "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                     "action": self.state.get("last_action", ""),
-                    "step_index": str(step_index),
                 }
                 
                 # Add game state summary to metadata
@@ -239,8 +231,7 @@ class PokemonInstance(Instance[Dict[str, Any], str]):
                 log(LogLevel.INFO, "Created snapshot", 
                     extra={
                         "event_type": EVENT_SNAPSHOT_CREATED, 
-                        "snapshot_id": snapshot_id, 
-                        "step_index": metadata.get("step_index", "0")
+                        "snapshot_id": snapshot_id
                     })
                 
                 return snapshot_id
@@ -313,8 +304,6 @@ class PokemonMCPHandler:
                 else:
                     log(LogLevel.ERROR, "Max retries reached, giving up")
                     return False
-
-        return False
 
         
         for attempt in range(MAX_RETRIES):
@@ -520,8 +509,9 @@ class PokemonMCPHandler:
 class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
     """An agent that plays Pokemon using the Claude API and tracks its trajectory."""
     
-    def __init__(self, mcp_handler: PokemonMCPHandler, model_name="claude-3-7-sonnet-latest", max_tokens=1000, max_history=30):
+    def __init__(self, mcp_handler: PokemonMCPHandler, morph_instance: MorphInstance, model_name="claude-3-7-sonnet-latest", max_tokens=1000, max_history=30):
         """Initialize the Pokemon agent."""
+        log(LogLevel.INFO, "PokemonAgent.__init__ start", extra={"morph_instance_exists": morph_instance is not None})
         super().__init__()
         self.mcp_handler = mcp_handler
         self.anthropic = Anthropic()
@@ -530,6 +520,9 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
         self.temperature = 0.7
         self.message_history = []
         self.max_history = max_history
+        self.morph_instance = morph_instance  # Store morph_instance
+        self.objective = "Explore Pokemon Red"  # Default objective
+        log(LogLevel.INFO, "PokemonAgent stored morph_instance", extra={"morph_instance_exists": self.morph_instance is not None})
         
         # Specialized trajectory
         self.trajectory = PokemonTrajectory()
@@ -546,17 +539,25 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
 
         self.system_prompt = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands: check your tools! for example, 'navigate_to' can help you move in the overworld. 
         
-        Before each action, explain your reasoning briefly, plan your immediate next few steps needed (low level actions, e.g. 'to reach the Cave, i need to go 1. right, 2. right, 3. right, 4. up', not high level goals) to get there, then use the available actions to execute the next step in the game. 
-        
-        The game commands always register perfectly, so if you see no reaction to them, you have made an invalid command and misunderstood the game state. In battles, when you see an attack that isn't effective, you should examine your assumptions and update your beliefs. In general, search the solution space (try different things) before getting stuck in ruts."""
+Before each action, explain your reasoning briefly, plan your immediate next few steps needed (low level tool calls and actions, e.g. 'to reach the Cave from here, I need to go 1. right, 2. right, 3. right, 4. up', not high level goals like '1. explore the Cave 2. ??? 3. win!') to get there, then use the available actions to execute the next step in the game. 
+
+The game commands always register perfectly, so if you see no reaction to them, you have made an invalid command and misunderstood the game state. In battles, when you see an attack that isn't effective, you should examine your assumptions and update your beliefs. In general, search the solution space (try different things) before getting stuck in ruts.
+
+Mistakes you have made before:
+- do not talk to NPCs
+- do not plan with high level goals
+- do not insist on your prior knowledge about what attacks are strong against what types of Pokemon works when the evidence is the opposite
+- you miss the cave, which is a black hole to the side of the pokemon center.
+        """
         
         log(LogLevel.INFO, f"Initialized PokemonAgent", 
             extra={"model": model_name, "max_tokens": max_tokens})
     
     def set_objective(self, objective: str):
         """Set the agent's current objective."""
+        log(LogLevel.INFO, "PokemonAgent.set_objective start", extra={"objective": objective, "morph_instance_exists": hasattr(self, 'morph_instance') and self.morph_instance is not None})
         self.objective = objective
-        log(LogLevel.INFO, f"Setting agent objective", extra={"objective": objective})
+        log(LogLevel.INFO, "PokemonAgent.set_objective end")
     
     async def initialize_state(self, morph_instance: 'MorphInstance') -> PokemonInstance:
         """Initialize the state from a MorphCloud instance."""
@@ -580,7 +581,8 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
         instance = PokemonInstance(initial_state, morph_instance)
         
         # Add a starting message to the history
-        initial_message = f"Your current objective is: {self.objective}\n\nYou may now begin playing Pokemon."
+        objective = getattr(self, 'objective', "Explore Pokemon Red")  # Use default if not set
+        initial_message = f"Your current objective is: {objective}\n\nYou may now begin playing Pokemon."
         self.message_history = [{"role": "user", "content": initial_message}]
         
         # Initialize the trajectory with the first step
@@ -599,7 +601,7 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
         
         # Update the state
         new_state = {
-            "game_state": game_state.get("game_state", {}),
+            "game_state": game_state.get("game_state", ""),
             "screenshot": screenshot_result.get("screenshot", ""),
             "valid_moves": game_state.get("valid_moves", []),
             "last_action": state.get("last_action", "")
@@ -735,6 +737,14 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
                     assistant_content.append({"type": "text", "text": block.text})
                 elif block.type == "tool_use":
                     assistant_content.append({"type": "tool_use", **dict(block)})
+                    # # Add a tool result immediately after each tool use
+                    # tool_result = {
+                    #     "type": "tool_result",
+                    #     "tool_call_id": block.id,
+                    #     "name": block.name,
+                    #     "result": "Tool call received"
+                    # }
+                    # assistant_content.append(tool_result)
                     log(LogLevel.DEBUG, f"Found tool call", 
                         extra={"tool": block.name, "input": json.dumps(block.input)})
             
@@ -786,95 +796,29 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
             "screenshot": state.get("screenshot", ""),
             "valid_moves": state.get("valid_moves", [])
         }
-
         
-        # Make sure morph_instance reference is preserved
-        if "_morph_instance" in state:
-            new_state["_morph_instance"] = state["_morph_instance"]
-        
-        # Update the state with fresh game information
-        new_state = await self._update_state(new_state)
-        
-        # Log tool result with standardized event
-        log(LogLevel.INFO, f"Tool result", 
-            extra={
-                "event_type": EVENT_TOOL_RESULT, 
-                "action": action,
-                "game_state": new_state["game_state"]
-            })
-        
-        # Create tool results from the action for Claude history
-        tool_results = []
-        
-        # Extract most recent assistant message to get tool ID
-        if self.message_history and self.message_history[-1]["role"] == "assistant":
-            assistant_content = self.message_history[-1]["content"]
-            tool_use_items = [item for item in assistant_content if isinstance(item, dict) and item.get("type") == "tool_use"]
-            
-            if tool_use_items:
-                tool_use_id = tool_use_items[0].get("id")
-                
-                if tool_use_id:
-                    # Create result content
-                    result_content = []
-                    
-                    # Add text result
-                    result_text = f"Action '{action}' executed."
-                    if "result" in action_result:
-                        result_text += f"\nResult: {action_result['result']}"
-                    
-                    result_content.append({"type": "text", "text": result_text})
-                    
-                    # Add screenshot if available
-                    if new_state["screenshot"]:
-                        result_content.append({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": new_state["screenshot"]
-                            }
-                        })
-                    
-                    # Create a proper tool result
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": result_content
-                    })
-                    
-                    # Add the tool results to message history
-                    self.message_history.append({"role": "user", "content": tool_results})
-        
-        # Create PokemonInstance from the new state
-        instance = PokemonInstance(new_state)
-        
-        if isinstance(self.trajectory, PokemonTrajectory):
-            # Use the enhanced method with Pokemon-specific fields
+        # Update trajectory with the current step's data
+        if hasattr(self, 'trajectory'):
             self.trajectory.add_step(
-                state=instance,
+                state=Instance(new_state),
                 action=action,
                 tool_name=self.current_tool_name,
                 tool_input=self.current_tool_input,
                 claude_text=self.current_claude_text
             )
-        else:
-            # Fall back to the base Trajectory method
-            log(LogLevel.WARNING, "Using base Trajectory.add_step instead of PokemonTrajectory", 
-                extra={"trajectory_class": self.trajectory.__class__.__name__})
-            self.trajectory.add_step(state=instance, action=action)
-
+            # Reset step data
+            self.current_tool_name = None
+            self.current_tool_input = None
+            self.current_claude_text = None
         
-        # Reset current step data
-        self.current_tool_name = None
-        self.current_tool_input = None
-        self.current_claude_text = None
+        # Update state with latest game information
+        updated_state = await self._update_state(new_state)
         
-        # Log action completion
-        log(LogLevel.INFO, f"Action completed", 
-            extra={"event_type": EVENT_ACTION_COMPLETED, "action": action})
+        # Make sure morph_instance reference is preserved
+        if "_morph_instance" in state:
+            updated_state["_morph_instance"] = state["_morph_instance"]
         
-        return new_state
+        return updated_state
     
     async def summarize_history(self):
         """Summarize the conversation history to save context space."""
@@ -1190,17 +1134,28 @@ class PokemonAPI:
                 return
 
             # 5. Create the agent
-            self.agent = PokemonAgent(mcp_handler=mcp_handler)
+            log(LogLevel.INFO, "About to create PokemonAgent", extra={"morph_instance_exists": self.morph_instance is not None})
+            self.agent = PokemonAgent(mcp_handler=mcp_handler, morph_instance=self.morph_instance)
+            log(LogLevel.INFO, "Created PokemonAgent")
+
+            # Initialize agent state
+            log(LogLevel.INFO, "Initializing agent state")
+            await self.agent.initialize_state(self.morph_instance)
+            log(LogLevel.INFO, "Initialized agent state")
             
             # Decide which VerifiedTask to run
             if task_id:
                 # Use a real task from tasks.py
+                log(LogLevel.INFO, "Creating task from task_id", extra={"task_id": task_id})
                 self.running_task = create_pokemon_verified_task(task_id, snapshot_id)
+                log(LogLevel.INFO, "Created task", extra={"instruction": self.running_task.instruction})
                 # The agent's "objective" might be the instruction from the actual task:
+                log(LogLevel.INFO, "Setting agent objective from task")
                 self.agent.set_objective(self.running_task.instruction)
+                log(LogLevel.INFO, "Set agent objective")
             else:
                 # Fallback: create a trivial verification or use the 'objective' string
-                # logger.warning("No task_id provided. Using trivial verification function.")
+                log(LogLevel.INFO, "Creating fallback task with objective", extra={"objective": objective})
                 def dummy_verify_func(gs: Dict[str, Any]) -> bool:
                     return False  # Always returns false => never completes
                 self.running_task = PokemonVerifiedTask.create(
@@ -1210,10 +1165,13 @@ class PokemonAPI:
                     verification_message="No real verification in place",
                     metadata={"game": "Pokemon Red", "objective": objective}
                 )
+                log(LogLevel.INFO, "Created fallback task")
+                log(LogLevel.INFO, "Setting agent objective from fallback")
                 self.agent.set_objective(objective)
+                log(LogLevel.INFO, "Set agent objective")
 
             # 6. Run the agent with E.V.A.
-            # logger.info(f"Starting E.V.A. run() for task: {self.running_task.instruction}")
+            log(LogLevel.INFO, "Starting E.V.A. run()", extra={"task_instruction": self.running_task.instruction})
             from eva import run
             result, trajectory = await run(
                 task=self.running_task,
@@ -1234,24 +1192,22 @@ class PokemonAPI:
     
     async def rollback_to_step(self, step_index: int):
         """Roll back to a specific step."""
+        if not self.agent or not self.agent.trajectory:
+            log(LogLevel.ERROR, "No trajectory to roll back")
+            return
+        
+        if step_index < 0 or step_index >= len(self.agent.trajectory.steps):
+            log(LogLevel.ERROR, f"Invalid step index {step_index}")
+            return
+        
         try:
-            log(LogLevel.INFO, f"Rolling back to step {step_index}")
-            
-            if not self.agent or not self.task:
-                log(LogLevel.ERROR, "Cannot rollback - agent or task not initialized")
-                return
-            
-            # Get snapshot ID from the step
-            target_step = self.agent.trajectory.steps[step_index]
-            snapshot_id = target_step.snapshot
+            # Get the snapshot ID from the step
+            step = self.agent.trajectory.steps[step_index]
+            snapshot_id = step.snapshot
             
             if not snapshot_id:
-                log(LogLevel.ERROR, f"No snapshot ID available for step {step_index}")
+                log(LogLevel.ERROR, "No snapshot ID for step")
                 return
-            
-            # Clean up existing MorphInstance if any
-            if self.morph_instance:
-                self.morph_instance.stop()
             
             # Start new MorphVM instance from the snapshot
             log(LogLevel.INFO, f"Starting MorphVM instance from rollback snapshot", 
@@ -1290,7 +1246,7 @@ class PokemonAPI:
                 return
             
             # Create new agent with the same objective
-            self.agent = PokemonAgent(mcp_handler=mcp_handler)
+            self.agent = PokemonAgent(mcp_handler=mcp_handler, morph_instance=self.morph_instance)
 
             self.agent.set_objective(getattr(self.task, 'instruction', "Continue playing Pokemon"))
             
@@ -1299,17 +1255,14 @@ class PokemonAPI:
             for i in range(step_index + 1):
                 new_trajectory.steps.append(self.agent.trajectory.steps[i])
             
+            # Update agent's trajectory
             self.agent.trajectory = new_trajectory
             
-            # Resume the agent
-            self.agent.resume()
-            
-            log(LogLevel.SUCCESS, f"Rollback to step {step_index} completed")
+            log(LogLevel.SUCCESS, f"Successfully rolled back to step {step_index}")
             
         except Exception as e:
-            log(LogLevel.ERROR, f"Error during rollback", extra={"error": str(e)})
-            import traceback
-            log(LogLevel.ERROR, f"Rollback error traceback", extra={"traceback": traceback.format_exc()})
+            log(LogLevel.ERROR, f"Error during rollback: {e}")
+            raise
     
     def start(self):
         """Start the API server."""
@@ -1445,7 +1398,7 @@ async def run_pokemon_without_api(snapshot_id: str, steps: int = 100):
             return
         
         # Create the agent
-        agent = PokemonAgent(mcp_handler=mcp_handler)
+        agent = PokemonAgent(mcp_handler=mcp_handler, morph_instance=morph_instance)
 
 
         # agent.trajectory = PokemonTrajectory()

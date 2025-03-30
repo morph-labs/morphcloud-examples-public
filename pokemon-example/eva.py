@@ -375,106 +375,120 @@ class Agent(ABC, Generic[S, A, R, T]):
         pass
 
 
+async def initialize_run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], ttl_seconds: Optional[int] = None) -> Tuple[Instance[S, T], Trajectory[S, A, R, T], 'MorphInstance']:
+    """
+       Initialize a run by creating the Morph instance and initial state.
+    
+    Returns:
+        Tuple of (initial_state, trajectory, morph_instance)
+    """
+    # Create a new Morph instance from the snapshot
+    log(LogLevel.INFO, "Creating MorphInstance", extra={"snapshot_id": task.snapshot_id})
+    morph_instance = MorphInstance(task.snapshot_id, task.metadata, ttl_seconds)
+    log(LogLevel.INFO, "Created MorphInstance")
+
+    # Initialize the state
+    log(LogLevel.INFO, "Initializing state with MorphInstance")
+    initial_state = await agent.initialize_state(morph_instance)
+    log(LogLevel.INFO, "Initialized state")
+    
+    # Set up trajectory
+    if hasattr(agent, 'trajectory') and agent.trajectory is not None:
+        trajectory = agent.trajectory
+    else:
+        trajectory = Trajectory[S, A, R, T]()
+        agent.trajectory = trajectory
+    
+    # Bind the agent to the instance
+    if hasattr(agent, 'bind_instance'):
+        agent.bind_instance(morph_instance)
+    
+    # Initialize with the initial state
+    trajectory.add_step(initial_state)
+    
+    return initial_state, trajectory, morph_instance
+
+async def continue_run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], 
+                      trajectory: Trajectory[S, A, R, T], morph_instance: 'MorphInstance',
+                      max_steps: int = 100, verify_every_step: bool = False) -> Tuple[VerificationResult[R], Trajectory[S, A, R, T]]:
+    """
+    Continue execution for max_steps more steps from the current state.
+    """
+    current_state = trajectory.current_state
+    if current_state is None:
+        error_msg = "No current state available"
+        log(LogLevel.ERROR, error_msg)
+        raise ValueError(error_msg)
+    
+    start_step = len(trajectory.steps)
+    for step_num in range(max_steps):
+        log(LogLevel.INFO, f"Starting step execution", 
+            extra={"step_num": start_step + step_num + 1})
+        
+        # Execute a step
+        log(LogLevel.INFO, "Determining next action...")
+        action = await agent.run_step(current_state)
+        log(LogLevel.INFO, f"Selected action", extra={"action": str(action)})
+        
+        # Apply the action to get a new state
+        log(LogLevel.INFO, f"Applying action", extra={"action": str(action)})
+        new_state_value = await agent.apply_action(current_state.state, action)
+        new_state = current_state.__class__(new_state_value)
+        
+        # Ensure morph_instance reference is preserved
+        if hasattr(new_state.state, '_morph_instance'):
+            object.__setattr__(new_state.state, '_morph_instance', morph_instance)
+        
+        # Record the step
+        trajectory.add_step(new_state, action)
+        
+        # Update current state
+        current_state = new_state
+        
+        # Check if we should verify
+        if verify_every_step or step_num == max_steps - 1:
+            log(LogLevel.INFO, "Verifying current state...")
+            result = task.verify(current_state, trajectory.actions)
+            trajectory.steps[-1].result = result
+            
+            if result.success:
+                log(LogLevel.SUCCESS, f"Task completed successfully", 
+                    extra={"steps_taken": start_step + step_num + 1})
+                trajectory.summarize()
+                return result, trajectory
+    
+    # If we reached max steps without success:
+    log(LogLevel.WARNING, f"Reached maximum steps without success", 
+        extra={"max_steps": max_steps})
+    
+    if trajectory.final_result is not None:
+        trajectory.summarize()
+        return trajectory.final_result, trajectory
+    
+    result = VerificationResult(
+        value=None,
+        success=False,
+        message=f"Failed to complete task within {max_steps} steps",
+        details={"last_state": str(current_state.state)}
+    )
+    result.log()
+    trajectory.summarize()
+    return result, trajectory
+
 async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_steps: int = 100, 
-        verify_every_step: bool = False, ttl_seconds: Optional[int] = None) -> Tuple[VerificationResult[R], Trajectory[S, A, R, T]]:
+             verify_every_step: bool = False, ttl_seconds: Optional[int] = None) -> Tuple[VerificationResult[R], Trajectory[S, A, R, T]]:
     """
     Run an agent on a task until the task is complete or max_steps is reached.
     """
-    log(LogLevel.INFO, f"Running agent for task", 
-        extra={"task": task.instruction, "max_steps": max_steps, "verify_every_step": verify_every_step})
-
-    agent.set_objective(task.instruction)
-
-    # Start a Morph instance from the task's snapshot
-    log(LogLevel.INFO, f"Starting Morph instance", 
-        extra={"snapshot_id": task.snapshot_id})
-    morph_instance = MorphInstance(task.snapshot_id, task.metadata, ttl_seconds)
-    
     try:
-        # Initialize the agent's state and trajectory
-        initial_state = await agent.initialize_state(morph_instance)
+        initial_state, trajectory, morph_instance = await initialize_run(task, agent, ttl_seconds)
+        return await continue_run(task, agent, trajectory, morph_instance, max_steps, verify_every_step)
         
-        # Set morph_instance reference
-        if hasattr(initial_state.state, '_morph_instance'):
-            object.__setattr__(initial_state.state, '_morph_instance', morph_instance)
-        
-        if hasattr(agent, 'trajectory') and agent.trajectory is not None:
-            trajectory = agent.trajectory
-        else:
-            trajectory = Trajectory[S, A, R, T]()
-            agent.trajectory = trajectory
-
-        
-        # Bind the agent to the instance
-        if hasattr(agent, 'bind_instance'):
-            agent.bind_instance(morph_instance)
-        
-        # Initialize with the initial state
-        trajectory.add_step(initial_state)
-        
-        current_state = trajectory.current_state
-        if current_state is None:
-            error_msg = "No initial state available"
-            log(LogLevel.ERROR, error_msg)
-            raise ValueError(error_msg)
-        
-        for step_num in range(max_steps):
-            log(LogLevel.INFO, f"Starting step execution", 
-                extra={"step_num": step_num+1, "max_steps": max_steps})
-            
-            # Execute a step - now with await
-            log(LogLevel.INFO, "Determining next action...")
-            action = await agent.run_step(current_state)
-            log(LogLevel.INFO, f"Selected action", extra={"action": str(action)})
-            
-            # Apply the action to get a new state - now with await
-            log(LogLevel.INFO, f"Applying action", extra={"action": str(action)})
-            new_state_value = await agent.apply_action(current_state.state, action)
-            new_state = current_state.__class__(new_state_value)
-            
-            # Ensure morph_instance reference is preserved
-            if hasattr(new_state.state, '_morph_instance'):
-                object.__setattr__(new_state.state, '_morph_instance', morph_instance)
-            
-            # Record the step
-            trajectory.add_step(new_state, action)
-            
-            # Update current state
-            current_state = new_state
-            
-            # Check if we should verify
-            if verify_every_step or step_num == max_steps - 1:
-                log(LogLevel.INFO, "Verifying current state...")
-                result = task.verify(current_state, trajectory.actions)
-                trajectory.steps[-1].result = result
-                
-                if result.success:
-                    log(LogLevel.SUCCESS, f"Task completed successfully", 
-                        extra={"steps_taken": step_num+1})
-                    trajectory.summarize()
-                    return result, trajectory
-        
-        # If we reached max steps without success:
-        log(LogLevel.WARNING, f"Reached maximum steps without success", 
-            extra={"max_steps": max_steps})
-        
-        if trajectory.final_result is not None:
-            trajectory.summarize()
-            return trajectory.final_result, trajectory
-        
-        result = VerificationResult(
-            value=None,
-            success=False,
-            message=f"Failed to complete task within {max_steps} steps",
-            details={"last_state": str(current_state.state)}
-        )
-        result.log()
-        trajectory.summarize()
-        return result, trajectory
-        
+    except Exception as e:
+        log(LogLevel.ERROR, f"Error in run: {str(e)}")
+        raise
     finally:
-        # Always clean up the Morph instance
-        morph_instance.stop()
+        log(LogLevel.INFO, "Run completed")
 
 async def run_step(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], 
              trajectory: Trajectory[S, A, R, T], verify: bool = False) -> Tuple[Instance[S, T], Optional[VerificationResult[R]]]:
@@ -621,11 +635,4 @@ class MorphInstance:
     
     def __del__(self) -> None:
         """Ensure the instance is stopped when this object is garbage collected."""
-        try:
-            if hasattr(self, 'instance') and self.instance:
-                self.stop()
-        except (AttributeError, Exception):
-            # Ignore errors during garbage collection
-            pass
-
-
+        pass

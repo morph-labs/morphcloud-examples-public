@@ -403,6 +403,8 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, Dict[str, Any]]):
             mcp_handler: Handler for MCP communication
             model_name: Claude model to use
             max_tokens: Maximum tokens to generate
+            max_history: Maximum number of messages to keep in history
+            morph_instance: Optional MorphInstance for snapshotting
         """
         super().__init__()
         self.mcp_handler = mcp_handler
@@ -1057,9 +1059,7 @@ async def run_pokemon_example(snapshot_id=None, steps=200):
         )
         
         # Create a Pokemon agent
-        agent = PokemonAgent(mcp_handler)
-
-        agent.morph_instance = morph_instance
+        agent = PokemonAgent(mcp_handler=mcp_handler, morph_instance=morph_instance)
 
         novnc_url = morph_instance.instance.expose_http_service(
             name="novnc",
@@ -1104,7 +1104,29 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run Pokemon agent with custom snapshot ID')
     parser.add_argument('--snapshot-id', type=str, help='Snapshot ID to use for the MorphVM instance')
     parser.add_argument('--steps', type=int, default=200, help='Number of steps to run the agent for')
+    parser.add_argument('--continue', action='store_true', help='Continue from the last state')
     
     args = parser.parse_args()
+    
+    # If continuing, use the last snapshot ID
+    if getattr(args, 'continue', False):
+        # Get the latest snapshot ID from the log file
+        log_file = get_latest_eva_log_file()
+        if log_file:
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+                # Read backwards to find the last snapshot
+                for line in reversed(lines):
+                    try:
+                        data = json.loads(line)
+                        if 'snapshot_id' in data.get('extra', {}):
+                            args.snapshot_id = data['extra']['snapshot_id']
+                            break
+                    except json.JSONDecodeError:
+                        continue
+        
+        if not args.snapshot_id:
+            print("Error: No previous snapshot found to continue from")
+            sys.exit(1)
     
     asyncio.run(run_pokemon_example(args.snapshot_id, args.steps))

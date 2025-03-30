@@ -333,7 +333,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     
                     <div class="form-group">
                         <label for="steps">NUMBER OF STEPS:</label>
-                        <input type="number" id="steps" value="50" min="1">
+                        <input type="number" id="steps" value="5" min="1">
                     </div>
                     
                     <div class="form-group">
@@ -347,6 +347,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                         <button id="play-btn" class="primary">PLAY</button>
                         <button id="pause-btn" class="secondary" disabled>PAUSE</button>
                         <button id="resume-btn" class="secondary" disabled>RESUME</button>
+                        <button id="continue-btn" class="secondary" disabled>CONTINUE (+100)</button>
                         <button id="rollback-btn" class="secondary" disabled>ROLLBACK TO SELECTED</button>
                         <button id="stop-btn" class="stop" disabled>STOP</button>
                     </div>
@@ -373,6 +374,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const playBtn = document.getElementById('play-btn');
         const pauseBtn = document.getElementById('pause-btn');
         const resumeBtn = document.getElementById('resume-btn');
+        const continueBtn = document.getElementById('continue-btn');
         const rollbackBtn = document.getElementById('rollback-btn');
         const stopBtn = document.getElementById('stop-btn');
         const refreshBtn = document.getElementById('refresh-btn');
@@ -529,25 +531,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         // Update UI based on status
         function updateUIForStatus(status) {
-            statusDisplay.textContent = `Status: ${status}`;
-            statusDisplay.className = 'status ' + status;
-
-            if (status === 'running') {
-                playBtn.disabled = true;
-                pauseBtn.disabled = false;
-                resumeBtn.disabled = true;
-                stopBtn.disabled = false;
-            } else if (status === 'paused') {
-                playBtn.disabled = true;
-                pauseBtn.disabled = true;
-                resumeBtn.disabled = false;
-                stopBtn.disabled = false;
-            } else if (status === 'stopped' || status === 'not_initialized') {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+            
+            if (status === 'stopped') {
+                statusDisplay.textContent = 'Status: Stopped';
+                statusDisplay.className = 'status stopped';
                 playBtn.disabled = false;
                 pauseBtn.disabled = true;
                 resumeBtn.disabled = true;
+                continueBtn.disabled = true;
                 stopBtn.disabled = true;
+                rollbackBtn.disabled = false;
+            } else if (status === 'running') {
+                statusDisplay.textContent = 'Status: Running';
+                statusDisplay.className = 'status running';
+                playBtn.disabled = true;
+                pauseBtn.disabled = false;
+                resumeBtn.disabled = true;
+                continueBtn.disabled = false;
+                stopBtn.disabled = false;
                 rollbackBtn.disabled = true;
+            } else if (status === 'paused') {
+                statusDisplay.textContent = 'Status: Paused';
+                statusDisplay.className = 'status paused';
+                playBtn.disabled = true;
+                pauseBtn.disabled = true;
+                resumeBtn.disabled = false;
+                continueBtn.disabled = false;
+                stopBtn.disabled = false;
+                rollbackBtn.disabled = false;
             }
         }
 
@@ -730,6 +743,33 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             } catch (err) {
                 console.error("Resume error:", err);
                 alert("Resume error: " + err.message);
+            }
+        });
+
+        continueBtn.addEventListener('click', async () => {
+            try {
+                statusDisplay.textContent = 'Status: Continuing...';
+                const r = await fetch(`${window.API_BASE_URL}/continue`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ steps: 100 })
+                });
+                const data = await r.json();
+                if (data.success) {
+                    pollingInterval = setInterval(fetchData, window.POLL_INTERVAL * 1000);
+                    statusDisplay.textContent = 'Status: Running';
+                    statusDisplay.className = 'status running';
+                    pauseBtn.disabled = false;
+                    stopBtn.disabled = false;
+                    continueBtn.disabled = false;
+                    resumeBtn.disabled = true;
+                } else {
+                    alert(`Failed to continue: ${data.error}`);
+                    updateUIForStatus('stopped');
+                }
+            } catch (err) {
+                console.error("Continue error:", err);
+                alert("Continue error: " + err.message);
             }
         });
 

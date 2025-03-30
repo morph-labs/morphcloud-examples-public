@@ -282,6 +282,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <div class="control-buttons">
                         <button id="play-btn" class="primary">PLAY</button>
                         <button id="stop-btn" class="stop" disabled>STOP</button>
+                        <button id="continue-btn" class="primary">CONTINUE</button>
                     </div>
 
                     <div id="status-display" class="status">Status: Ready</div>
@@ -304,6 +305,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const gameIframe = document.getElementById('game-iframe');
         const playBtn = document.getElementById('play-btn');
         const stopBtn = document.getElementById('stop-btn');
+        const continueBtn = document.getElementById('continue-btn');
         const refreshLogsBtn = document.getElementById('refresh-logs-btn');
         const snapshotsList = document.getElementById('snapshots-list');
         const statusDisplay = document.getElementById('status-display');
@@ -465,6 +467,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         function resetPlayState() {
             playBtn.disabled = false;
             stopBtn.disabled = true;
+            continueBtn.disabled = true;
             statusDisplay.textContent = 'Status: Ready';
             statusDisplay.className = 'status';
         }
@@ -483,6 +486,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 // Update UI
                 playBtn.disabled = true;
                 stopBtn.disabled = false;
+                continueBtn.disabled = false;
                 statusDisplay.textContent = 'Status: Starting...';
                 statusDisplay.className = 'status running';
                 
@@ -539,6 +543,44 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 console.error('Error stopping script:', error);
                 alert(`Error: ${error.message}`);
                 statusDisplay.textContent = 'Status: Error stopping';
+            }
+        });
+
+        // Continue button click handler
+        continueBtn.addEventListener('click', async () => {
+            try {
+                // Update UI
+                playBtn.disabled = true;
+                stopBtn.disabled = false;
+                continueBtn.disabled = true;
+                statusDisplay.textContent = 'Status: Continuing...';
+                statusDisplay.className = 'status running';
+                
+                // Continue the script
+                const response = await fetch('/api/continue', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        steps: document.getElementById('steps').value
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Start fetching logs
+                    logUpdateInterval = setInterval(fetchLogs, 2000);
+                    statusDisplay.textContent = 'Status: Running';
+                } else {
+                    alert(`Failed to continue: ${data.error}`);
+                    resetPlayState();
+                }
+            } catch (error) {
+                console.error('Error continuing script:', error);
+                alert(`Error: ${error.message}`);
+                resetPlayState();
             }
         });
 
@@ -850,6 +892,18 @@ class APIHandler(SimpleHTTPRequestHandler):
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps(result).encode())
+
+            elif self.path == '/api/continue':
+                # Parse the request data
+                params = json.loads(post_data)
+                
+                # Continue the Pokemon agent
+                result = continue_pokemon_agent(steps=params.get('steps', 100))
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode())
                 
             else:
                 self.send_response(404)
@@ -929,6 +983,52 @@ def start_pokemon_agent(snapshot_id, steps=10):
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return {'success': False, 'error': str(e)}
+
+# Continue the Pokemon agent
+def continue_pokemon_agent(steps=100):
+    """Continue the Pokemon agent for additional steps."""
+    global active_process
+    
+    with process_lock:
+        if active_process is None or active_process.poll() is not None:
+            return {'success': False, 'error': 'No agent is currently running'}
+        
+        try:
+            # Build command to continue execution
+            cmd = [
+                sys.executable,  # Use the current Python interpreter
+                'pokemon_eva_agent.py',  # The EVA agent script
+                '--continue',  # Flag to indicate continuing execution
+                '--steps', str(steps)
+            ]
+            
+            # Log the command
+            logger.info(f"Continuing Pokemon agent: {' '.join(cmd)}")
+            
+            # Start the process
+            active_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1  # Line buffered
+            )
+            
+            # Log the process ID
+            logger.info(f"Continue process started with PID: {active_process.pid}")
+            
+            # Check if process is still running after a brief delay
+            time.sleep(1)
+            if active_process.poll() is not None:
+                logger.error(f"Continue process exited immediately with code: {active_process.poll()}")
+                return {'success': False, 'error': f'Continue process exited immediately with code: {active_process.poll()}'}
+            
+            return {'success': True}
+        except Exception as e:
+            logger.error(f"Error continuing Pokemon agent: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {'success': False, 'error': str(e)}
 
 # Stop the Pokemon agent
 def stop_pokemon_agent():
