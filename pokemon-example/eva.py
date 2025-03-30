@@ -24,17 +24,15 @@ import logging
 import json
 import os
 import time
+import datetime as dt
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, TypeVar, Union, Tuple
+from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, TypeVar, Union, Tuple, override
 
 # Import MorphCloud API
 from morphcloud.api import MorphCloudClient, Instance, Snapshot
-
-# Configure colorful logging
-import colorlog
 
 # Global MorphCloud client
 morph_client = MorphCloudClient(
@@ -48,7 +46,7 @@ A = TypeVar('A')  # Action type
 R = TypeVar('R')  # Verification result type
 T = TypeVar('T')  # Snapshot type
 
-# Setup logging with colors
+# Setup logging with JSON formatting
 class LogLevel(Enum):
     INFO = 'info'
     SUCCESS = 'success'
@@ -56,59 +54,137 @@ class LogLevel(Enum):
     ERROR = 'error'
     DEBUG = 'debug'
 
-# Configure the color logger
-handler = colorlog.StreamHandler()
-handler.setFormatter(colorlog.ColoredFormatter(
-    '%(log_color)s[%(levelname)s] %(message)s',
-    log_colors={
-        'DEBUG': 'cyan',
-        'INFO': 'green',
-        'WARNING': 'yellow',
-        'ERROR': 'red',
-        'CRITICAL': 'red,bg_white',
-        'SUCCESS': 'bold_green',
-    },
-    secondary_log_colors={
-        'message': {
-            'DEBUG': 'cyan',
-            'INFO': 'white',
-            'WARNING': 'yellow',
-            'ERROR': 'red',
-            'CRITICAL': 'red',
-            'SUCCESS': 'green',
-        }
-    }
-))
+# Define built-in log record attributes to filter from custom fields
+LOG_RECORD_BUILTIN_ATTRS = {
+    "args", "asctime", "created", "exc_info", "exc_text", "filename",
+    "funcName", "levelname", "levelno", "lineno", "module", "msecs",
+    "message", "msg", "name", "pathname", "process", "processName",
+    "relativeCreated", "stack_info", "thread", "threadName", "taskName",
+}
 
-logger = colorlog.getLogger('eva')
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+class JSONLFormatter(logging.Formatter):
+    """JSONL formatter for structured logging."""
+    
+    def __init__(self, fmt_keys=None):
+        super().__init__()
+        self.fmt_keys = fmt_keys if fmt_keys is not None else {
+            "timestamp": "created",
+            "level": "levelname",
+            "logger": "name",
+            "message": "message"
+        }
+    
+    @override
+    def format(self, record: logging.LogRecord) -> str:
+        message = self._prepare_log_dict(record)
+        return json.dumps(message, default=str)
+    
+    def _prepare_log_dict(self, record: logging.LogRecord) -> dict:
+        always_fields = {
+            "message": record.getMessage(),
+            "timestamp": dt.datetime.fromtimestamp(
+                record.created, tz=dt.timezone.utc
+            ).isoformat(),
+        }
+        
+        if record.exc_info is not None:
+            always_fields["exc_info"] = self.formatException(record.exc_info)
+        
+        if record.stack_info is not None:
+            always_fields["stack_info"] = self.formatStack(record.stack_info)
+        
+        message = {
+            key: always_fields.pop(val, None) if val in always_fields else getattr(record, val)
+            for key, val in self.fmt_keys.items()
+        }
+        
+        message.update(always_fields)
+        
+        # Add any custom attributes
+        for key, val in record.__dict__.items():
+            if key not in LOG_RECORD_BUILTIN_ATTRS:
+                message[key] = val
+        
+        return message
+
+# Configure logging with both file and console output
+logger = logging.getLogger('eva')
+# Remove any existing handlers
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
 
 # Add a custom success level
 logging.SUCCESS = 25  # Between INFO and WARNING
 logging.addLevelName(logging.SUCCESS, 'SUCCESS')
 
+# Add success method to Logger class
 def success(self, message, *args, **kwargs):
     if self.isEnabledFor(logging.SUCCESS):
         self.log(logging.SUCCESS, message, *args, **kwargs)
 
 logging.Logger.success = success
 
+# Create a readable console formatter
+class ColoredConsoleFormatter(logging.Formatter):
+    """Formatter for console with optional color support"""
+    
+    COLORS = {
+        'DEBUG': '\033[94m',  # Blue
+        'INFO': '\033[92m',   # Green
+        'SUCCESS': '\033[96m', # Cyan
+        'WARNING': '\033[93m', # Yellow
+        'ERROR': '\033[91m',   # Red
+        'CRITICAL': '\033[91m\033[1m', # Bold Red
+        'RESET': '\033[0m'    # Reset
+    }
+    
+    def __init__(self, use_colors=True, fmt=None):
+        super().__init__(fmt or '%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        self.use_colors = use_colors
+    
+    def format(self, record):
+        log_message = super().format(record)
+        if self.use_colors and record.levelname in self.COLORS:
+            log_message = f"{self.COLORS[record.levelname]}{log_message}{self.COLORS['RESET']}"
+        return log_message
+
+# File path for JSONL logs
+log_directory = os.environ.get("EVA_LOG_DIR", "logs")
+os.makedirs(log_directory, exist_ok=True)
+log_filename = os.path.join(log_directory, f"eva_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
+
+# Create the file handler with JSON formatting
+file_handler = logging.FileHandler(log_filename)
+file_handler.setFormatter(JSONLFormatter())
+
+# Create the console handler with readable formatting
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(ColoredConsoleFormatter(use_colors=True))
+
+# Add both handlers to the logger
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+logger.setLevel(logging.INFO)
+
+# Update the log function to handle the dual logging
 def log(level: Union[LogLevel, str], message: str, *args, **kwargs):
-    """Unified logging function with color support."""
+    """Unified logging function that logs to both file (JSON) and console (readable)."""
     if isinstance(level, str):
         level = LogLevel(level)
     
+    # Extract any extra key-value pairs for the JSON log
+    extra = kwargs.pop('extra', {})
+    
     if level == LogLevel.INFO:
-        logger.info(message, *args, **kwargs)
+        logger.info(message, *args, extra=extra, **kwargs)
     elif level == LogLevel.SUCCESS:
-        logger.success(message, *args, **kwargs)
+        logger.success(message, *args, extra=extra, **kwargs)
     elif level == LogLevel.WARNING:
-        logger.warning(message, *args, **kwargs)
+        logger.warning(message, *args, extra=extra, **kwargs)
     elif level == LogLevel.ERROR:
-        logger.error(message, *args, **kwargs)
+        logger.error(message, *args, extra=extra, **kwargs)
     elif level == LogLevel.DEBUG:
-        logger.debug(message, *args, **kwargs)
+        logger.debug(message, *args, extra=extra, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -135,15 +211,13 @@ class VerificationResult(Generic[R]):
     details: Dict[str, Any] = field(default_factory=dict)
     
     def log(self):
-        """Log the verification result with appropriate color."""
+        """Log the verification result with appropriate level."""
         if self.success:
-            log(LogLevel.SUCCESS, f"✓ Verification succeeded: {self.message}")
-            if self.details:
-                log(LogLevel.DEBUG, f"  Details: {self.details}")
+            log(LogLevel.SUCCESS, f"Verification succeeded: {self.message}", 
+                extra={"result_type": "verification", "details": self.details})
         else:
-            log(LogLevel.ERROR, f"✗ Verification failed: {self.message}")
-            if self.details:
-                log(LogLevel.DEBUG, f"  Details: {self.details}")
+            log(LogLevel.ERROR, f"Verification failed: {self.message}", 
+                extra={"result_type": "verification", "details": self.details})
 
 
 @dataclass(frozen=True)
@@ -162,13 +236,13 @@ class VerifiedTask(Generic[S, A, R, T]):
     metadata: Dict[str, str] = field(default_factory=dict)
     
     def __post_init__(self):
-        log(LogLevel.INFO, f"Created task: {self.instruction}")
-        log(LogLevel.INFO, f"Using snapshot: {self.snapshot_id}")
+        log(LogLevel.INFO, f"Created task: {self.instruction}", 
+            extra={"task_id": self.snapshot_id, "metadata": self.metadata})
     
     def verify(self, final_state: Instance[S, T], actions: Sequence[A]) -> VerificationResult[R]:
         """Verify if the task was completed correctly."""
-        log(LogLevel.INFO, f"Verifying task: {self.instruction}")
-        log(LogLevel.DEBUG, f"  Actions: {actions}")
+        log(LogLevel.INFO, f"Verifying task: {self.instruction}", 
+            extra={"action_count": len(actions)})
         
         result = self.verifier(final_state, actions)
         result.log()
@@ -186,7 +260,8 @@ class TrajectoryStep(Generic[S, A, R, T]):
     
     def __post_init__(self):
         action_str = f" -> {self.action}" if self.action else " (initial)"
-        log(LogLevel.DEBUG, f"Trajectory step{action_str}")
+        log(LogLevel.DEBUG, f"Trajectory step{action_str}", 
+            extra={"step_type": "initial" if self.action is None else "action"})
 
 
 @dataclass
@@ -203,10 +278,11 @@ class Trajectory(Generic[S, A, R, T]):
         self.steps.append(step)
         
         if len(self.steps) == 1:
-            log(LogLevel.INFO, "Started new trajectory")
+            log(LogLevel.INFO, "Started new trajectory", extra={"step_index": 0})
         else:
             action_str = f"{action}" if action else "None"
-            log(LogLevel.INFO, f"Step {len(self.steps)-1}: Action={action_str}")
+            log(LogLevel.INFO, f"Step {len(self.steps)-1}: Action={action_str}", 
+                extra={"step_index": len(self.steps)-1, "action": action_str})
     
     @property
     def current_state(self) -> Optional[Instance[S, T]]:
@@ -235,13 +311,16 @@ class Trajectory(Generic[S, A, R, T]):
     
     def summarize(self):
         """Log a summary of the trajectory."""
-        log(LogLevel.INFO, f"Trajectory summary: {len(self.steps)} steps")
+        log(LogLevel.INFO, f"Trajectory summary", 
+            extra={"step_count": len(self.steps), "has_result": self.final_result is not None})
         
         if self.final_result:
             if self.final_result.success:
-                log(LogLevel.SUCCESS, f"Final result: Success - {self.final_result.message}")
+                log(LogLevel.SUCCESS, f"Final result: Success - {self.final_result.message}",
+                    extra={"result_details": self.final_result.details})
             else:
-                log(LogLevel.ERROR, f"Final result: Failure - {self.final_result.message}")
+                log(LogLevel.ERROR, f"Final result: Failure - {self.final_result.message}",
+                    extra={"result_details": self.final_result.details})
         else:
             log(LogLevel.WARNING, "No final verification result")
 
@@ -253,7 +332,7 @@ class Agent(ABC, Generic[S, A, R, T]):
     
     def __init__(self):
         self.trajectory = None
-        log(LogLevel.INFO, f"Initializing agent")
+        log(LogLevel.INFO, f"Initializing agent", extra={"agent_type": self.__class__.__name__})
 
     def set_objective(self, objective: str) -> None:
         """
@@ -302,13 +381,14 @@ async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_step
     """
     Run an agent on a task until the task is complete or max_steps is reached.
     """
-    log(LogLevel.INFO, f"Running agent for task: {task.instruction}")
-    log(LogLevel.INFO, f"Max steps: {max_steps}, verify_every_step: {verify_every_step}")
+    log(LogLevel.INFO, f"Running agent for task", 
+        extra={"task": task.instruction, "max_steps": max_steps, "verify_every_step": verify_every_step})
 
     agent.set_objective(task.instruction)
 
     # Start a Morph instance from the task's snapshot
-    log(LogLevel.INFO, f"Starting Morph instance from snapshot: {task.snapshot_id}")
+    log(LogLevel.INFO, f"Starting Morph instance", 
+        extra={"snapshot_id": task.snapshot_id})
     morph_instance = MorphInstance(task.snapshot_id, task.metadata, ttl_seconds)
     
     try:
@@ -336,15 +416,16 @@ async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_step
             raise ValueError(error_msg)
         
         for step_num in range(max_steps):
-            log(LogLevel.INFO, f"Step {step_num+1}/{max_steps}")
+            log(LogLevel.INFO, f"Starting step execution", 
+                extra={"step_num": step_num+1, "max_steps": max_steps})
             
             # Execute a step - now with await
             log(LogLevel.INFO, "Determining next action...")
             action = await agent.run_step(current_state)
-            log(LogLevel.INFO, f"Selected action: {action}")
+            log(LogLevel.INFO, f"Selected action", extra={"action": str(action)})
             
             # Apply the action to get a new state - now with await
-            log(LogLevel.INFO, f"Applying action: {action}")
+            log(LogLevel.INFO, f"Applying action", extra={"action": str(action)})
             new_state_value = await agent.apply_action(current_state.state, action)
             new_state = current_state.__class__(new_state_value)
             
@@ -365,12 +446,14 @@ async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_step
                 trajectory.steps[-1].result = result
                 
                 if result.success:
-                    log(LogLevel.SUCCESS, f"Task completed successfully after {step_num+1} steps")
+                    log(LogLevel.SUCCESS, f"Task completed successfully", 
+                        extra={"steps_taken": step_num+1})
                     trajectory.summarize()
                     return result, trajectory
         
         # If we reached max steps without success:
-        log(LogLevel.WARNING, f"Reached maximum steps ({max_steps}) without success")
+        log(LogLevel.WARNING, f"Reached maximum steps without success", 
+            extra={"max_steps": max_steps})
         
         if trajectory.final_result is not None:
             trajectory.summarize()
@@ -380,7 +463,7 @@ async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_step
             value=None,
             success=False,
             message=f"Failed to complete task within {max_steps} steps",
-            details={"last_state": current_state.state}
+            details={"last_state": str(current_state.state)}
         )
         result.log()
         trajectory.summarize()
@@ -389,8 +472,6 @@ async def run(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], max_step
     finally:
         # Always clean up the Morph instance
         morph_instance.stop()
-
-
 
 async def run_step(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T], 
              trajectory: Trajectory[S, A, R, T], verify: bool = False) -> Tuple[Instance[S, T], Optional[VerificationResult[R]]]:
@@ -423,163 +504,6 @@ async def run_step(task: VerifiedTask[S, A, R, T], agent: Agent[S, A, R, T],
         trajectory.steps[-1].result = result
     
     return new_state, result
-
-# --- Composition Utilities ---
-
-
-def sequential_tasks(tasks: Sequence[VerifiedTask[S, A, R, T]], 
-                     name: str = "Sequential Tasks",
-                     metadata: Optional[Dict[str, str]] = None) -> VerifiedTask[S, A, List[R], T]:
-    """
-    Combine multiple tasks into a sequence.
-
-The resulting task is successful only if all constituent tasks are successful.
-    """
-    
-    if not tasks:
-        error_msg = "Cannot create sequential tasks from empty sequence"
-        log(LogLevel.ERROR, error_msg)
-        raise ValueError(error_msg)
-
-    
-
-    log(LogLevel.INFO, f"Creating sequential task '{name}' with {len(tasks)} subtasks")
-
-    # Use the snapshot_id from the first task
-
-    snapshot_id = tasks[0].snapshot_id
-    log(LogLevel.DEBUG, f"Using snapshot_id from first task: {snapshot_id}")
-    
-
-    def sequential_verifier(state: Instance[S, T], 
-                           actions: Sequence[A]) -> VerificationResult[List[R]]:
-        log(LogLevel.INFO, f"Verifying sequential task '{name}'")
-        
-
-        results = []
-        success = True
-        messages = []
-
-        for i, task in enumerate(tasks):
-            log(LogLevel.INFO, f"Verifying subtask {i+1}/{len(tasks)}: {task.instruction}")
-            result = task.verify(state, actions)
-            results.append(result.value)
-
-
-            if result.success:
-                log(LogLevel.SUCCESS, f"Subtask {i+1} succeeded")
-
-            else:
-                log(LogLevel.ERROR, f"Subtask {i+1} failed: {result.message}")
-                success = False
-                messages.append(result.message)
-
-        
-
-        if success:
-            log(LogLevel.SUCCESS, "All subtasks completed successfully")
-            message = "All tasks completed successfully"
-
-        else:
-            log(LogLevel.ERROR, f"Some subtasks failed: {messages}")
-            message = f"Failed tasks: {'; '.join(messages)}"
-
-        
-
-        return VerificationResult(
-            value=results,
-            success=success,
-            message=message,
-            details={"task_count": len(tasks)}
-
-        )
-
-    
-
-    return VerifiedTask(
-        instruction=name,
-        snapshot_id=snapshot_id,
-        verifier=sequential_verifier,
-        metadata=metadata or {}
-
-    )
-
-
-
-
-
-def any_of_tasks(tasks: Sequence[VerifiedTask[S, A, R, T]], 
-
-                name: str = "Any Task",
-
-                metadata: Optional[Dict[str, str]] = None) -> VerifiedTask[S, A, R, T]:
-
-    """
-
-    Combine multiple tasks where success of any constitutes overall success.
-
-    
-
-    The resulting task is successful if any constituent task is successful.
-
-    """
-
-    if not tasks:
-        error_msg = "Cannot create any_of tasks from empty sequence"
-        log(LogLevel.ERROR, error_msg)
-        raise ValueError(error_msg)
-
-    
-
-    log(LogLevel.INFO, f"Creating any-of task '{name}' with {len(tasks)} subtasks")
-
-    # Use the snapshot_id from the first task
-
-    snapshot_id = tasks[0].snapshot_id
-    log(LogLevel.DEBUG, f"Using snapshot_id from first task: {snapshot_id}")
-
-    
-
-    def any_verifier(state: Instance[S, T], 
-                    actions: Sequence[A]) -> VerificationResult[R]:
-        log(LogLevel.INFO, f"Verifying any-of task '{name}'")
-
-        
-
-        for i, task in enumerate(tasks):
-            log(LogLevel.INFO, f"Verifying subtask {i+1}/{len(tasks)}: {task.instruction}")
-            result = task.verify(state, actions)
-
-
-            if result.success:
-                log(LogLevel.SUCCESS, f"Subtask {i+1} succeeded, overall task successful")
-                return result
-
-            else:
-                log(LogLevel.WARNING, f"Subtask {i+1} failed, trying next subtask")
-
-        
-
-        # If we get here, no task succeeded
-
-        log(LogLevel.ERROR, "All subtasks failed, overall task failed")
-
-        return VerificationResult(
-            value=None,
-            success=False,
-            message="None of the tasks completed successfully",
-            details={"task_count": len(tasks)}
-        )
-
-    
-
-    return VerifiedTask(
-        instruction=name,
-        snapshot_id=snapshot_id,
-        verifier=any_verifier,
-        metadata=metadata or {}
-
-    )
 
 # --- Example Implementations with MorphCloud ---
 
@@ -636,186 +560,3 @@ class MorphInstance:
     def __del__(self) -> None:
         """Ensure the instance is stopped when this object is garbage collected."""
         self.stop()
-
-
-@dataclass(frozen=True)
-class BashState:
-    """State for bash command execution."""
-    env: Dict[str, str] = field(default_factory=dict)
-    cwd: str = "/"
-    stdout: str = ""
-    stderr: str = ""
-    exit_code: Optional[int] = None
-    _morph_instance: Optional[Any] = None  # Reference to the MorphInstance for verification
-
-
-@dataclass(frozen=True)
-class BashInstance(Instance[BashState, Dict[str, Any]]):
-    """Bash-specific instance implementation."""
-    
-    def snapshot(self) -> Dict[str, Any]:
-        """Create a serializable snapshot of the bash state."""
-        return {
-            "env": dict(self.state.env),
-            "cwd": self.state.cwd,
-            "stdout": self.state.stdout,
-            "stderr": self.state.stderr,
-            "exit_code": self.state.exit_code,
-            "timestamp": str(datetime.now()),  # For visualization timeline
-        }
-
-
-class BashVerifiedTask(VerifiedTask[BashState, str, int, Dict[str, Any]]):
-    """
-    A task verified by running a separate verification bash command and checking its exit code.
-    The verification command is distinct from the commands executed during the task.
-    """
-    
-    @staticmethod
-    def create(instruction: str,
-               snapshot_id: str,
-               verification_command: str,
-               expected_exit_code: int = 0,
-               metadata: Optional[Dict[str, str]] = None) -> BashVerifiedTask:
-        """
-        Create a bash verified task.
-        
-        Args:
-            instruction: The instruction for what to accomplish
-            snapshot_id: The MorphCloud snapshot ID to start from
-            verification_command: The command to run to verify the task's success
-            expected_exit_code: The exit code that indicates success
-            metadata: Optional metadata for the task and MorphCloud instance
-            
-        Returns:
-            A BashVerifiedTask instance
-        """
-        log(LogLevel.INFO, f"Creating bash task: {instruction}")
-        log(LogLevel.DEBUG, f"  Snapshot ID: {snapshot_id}")
-        log(LogLevel.DEBUG, f"  Verification command: {verification_command}")
-        log(LogLevel.DEBUG, f"  Expected exit code: {expected_exit_code}")
-        
-        def bash_verifier(state: Instance[BashState, Dict[str, Any]], 
-                          actions: Sequence[str]) -> VerificationResult[int]:
-            log(LogLevel.INFO, f"Verifying bash task using command: {verification_command}")
-            
-            # We need to run the verification command on the current MorphCloud instance
-            # This is different from the commands that were executed during the task
-            try:
-                # This will be provided by the run() function context
-                morph_instance = state.state._morph_instance
-                
-                # Execute the verification command
-                log(LogLevel.INFO, f"Running verification command: {verification_command}")
-                result = morph_instance.exec(verification_command)
-                
-                exit_code = result["exit_code"]
-                success = exit_code == expected_exit_code
-                
-                if success:
-                    log(LogLevel.SUCCESS, f"Verification succeeded with exit code {exit_code}")
-                else:
-                    log(LogLevel.ERROR, f"Verification failed with exit code {exit_code}")
-                
-                return VerificationResult(
-                    value=exit_code,
-                    success=success,
-                    message=f"Verification {'succeeded' if success else 'failed'} with exit code {exit_code}",
-                    details={
-                        "stdout": result["stdout"],
-                        "stderr": result["stderr"],
-                        "verification_command": verification_command,
-                        "actions": actions
-                    }
-                )
-            except AttributeError:
-                log(LogLevel.ERROR, "MorphCloud instance not available for verification")
-                return VerificationResult(
-                    value=None,
-                    success=False,
-                    message="Unable to run verification command: MorphCloud instance not available",
-                    details={"verification_command": verification_command}
-                )
-            except Exception as e:
-                log(LogLevel.ERROR, f"Error running verification command: {str(e)}")
-                return VerificationResult(
-                    value=None,
-                    success=False,
-                    message=f"Error running verification command: {str(e)}",
-                    details={"verification_command": verification_command}
-                )
-            
-        return BashVerifiedTask(
-            instruction=instruction,
-            snapshot_id=snapshot_id,
-            verifier=bash_verifier,
-            metadata=metadata or {},
-        )
-
-
-class BashAgent(Agent[BashState, str, int, Dict[str, Any]]):
-    """An agent that executes bash commands using MorphCloud instances."""
-    
-    def __init__(self):
-        super().__init__()
-        log(LogLevel.INFO, "Initializing BashAgent")
-    
-    async def initialize_state(self, morph_instance: MorphInstance) -> BashInstance:
-        """Initialize the state from a MorphCloud instance."""
-        initial_state = BashState(
-            env={},  # We could get this from the instance but we'll start empty
-            cwd="/",
-            stdout="",
-            stderr="",
-            exit_code=None
-        )
-        return BashInstance(initial_state)
-    
-    async def run_step(self, state: Instance[BashState, Dict[str, Any]]) -> str:
-        """
-        Determine the next bash command to execute.
-        """
-        log(LogLevel.INFO, "BashAgent determining next command")
-        return "echo 'Hello, world!'"
-    
-    async def apply_action(self, state: BashState, action: str) -> BashState:
-        """
-        Execute a bash command on the MorphCloud instance and return the new state.
-        """
-        log(LogLevel.INFO, f"Executing bash command: {action}")
-        
-        # Execute the command on the instance
-        try:
-            result = self._morph_instance.exec(action)
-            
-            # Update the state with the result
-            log(LogLevel.SUCCESS, f"Command executed with exit code {result['exit_code']}")
-            return BashState(
-                env=state.env.copy(),
-                cwd=state.cwd,
-                stdout=result["stdout"],
-                stderr=result["stderr"],
-                exit_code=result["exit_code"]
-            )
-        except Exception as e:
-            log(LogLevel.ERROR, f"Command execution failed: {str(e)}")
-            return BashState(
-                env=state.env.copy(),
-                cwd=state.cwd,
-                stdout="",
-                stderr=f"Execution error: {str(e)}\n",
-                exit_code=1
-            )
-    
-    def bind_instance(self, morph_instance: MorphInstance) -> None:
-        """Bind a MorphCloud instance to this agent for command execution."""
-        self._morph_instance = morph_instance
-
-
-# Entry point for running examples
-if __name__ == "__main__":
-    # Examples to run
-    import asyncio
-    
-    # Uncomment one of these to run the example
-    # asyncio.run(example_usage())
