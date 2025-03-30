@@ -1,14 +1,15 @@
-## /// script
+#!/usr/bin/env python3
+# /// script
 # dependencies = [
+#   "morphcloud",
 #   "requests",
 #   "pillow",
-#   "anthropic",
-#   "morphcloud",
 #   "rich",
+#   "anthropic",
 # ]
-# /// 
+# ///
 
-#!/usr/bin/env python3
+
 """
 Run a non-interactive server agent that plays Pokemon automatically.
 This script combines the EmulatorClient, ServerAgent, and runner into a single file.
@@ -26,11 +27,7 @@ from PIL import Image
 from anthropic import Anthropic
 from morphcloud.api import MorphCloudClient
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Set up logging - this will be configured properly in main() based on command line args
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -229,19 +226,30 @@ def get_screenshot_base64(screenshot, upscale=1):
 
 
 class ServerAgent:
-    def __init__(self, server_host='127.0.0.1', server_port=9876, max_history=60):
+    def __init__(self, server_host='127.0.0.1', server_port=9876, max_history=60, display_config=None):
         """Initialize the server agent.
 
         Args:
             server_host: Host where the game server is running
             server_port: Port number of the game server
             max_history: Maximum number of messages in history before summarization
+            display_config: Dictionary with display configuration options
         """
         self.client = EmulatorClient(host=server_host, port=server_port)
         self.anthropic = Anthropic()
         self.running = True
         self.message_history = [{"role": "user", "content": "You may now begin playing."}]
         self.max_history = max_history
+        
+        # Set display configuration with defaults
+        self.display_config = display_config or {
+            'show_game_state': False,
+            'show_collision_map': False,
+            'quiet_mode': False
+        }
+        
+        # Log initialization with chosen configuration
+        logger.debug(f"Agent initialized with display config: {self.display_config}")
         
         # Check if the server is ready
         if not self.client.initialize():
@@ -317,12 +325,22 @@ The summary should be comprehensive enough that you can continue gameplay withou
         """Process a single tool call."""
         tool_name = tool_call.name
         tool_input = tool_call.input
-        logger.info(f"Processing tool call: {tool_name}")
+        
+        # In quiet mode, only log at debug level
+        if self.display_config['quiet_mode']:
+            logger.debug(f"Processing tool call: {tool_name}")
+        else:
+            logger.info(f"Processing tool call: {tool_name}")
 
         if tool_name == "press_buttons":
             buttons = tool_input["buttons"]
             wait = tool_input.get("wait", True)
-            logger.info(f"[Buttons] Pressing: {buttons} (wait={wait})")
+            
+            # Log the button press action
+            if self.display_config['quiet_mode']:
+                logger.debug(f"[Buttons] Pressing: {buttons} (wait={wait})")
+            else:
+                logger.info(f"[Buttons] Pressing: {buttons} (wait={wait})")
             
             # Use enhanced client method to get result, state, and screenshot in one call
             response = self.client.press_buttons(
@@ -338,21 +356,33 @@ The summary should be comprehensive enough that you can continue gameplay withou
             # Get game state from response or fetch it if not included
             if 'game_state' in response:
                 memory_info = response['game_state'].get('game_state', '')
-                logger.info(f"[Memory State from response]")
-                logger.info(memory_info)
+                if self.display_config['show_game_state']:
+                    logger.info(f"[Memory State from response]")
+                    logger.info(memory_info)
+                else:
+                    logger.debug(f"[Memory State from response]")
+                    logger.debug(memory_info)
                 
                 collision_map = response['game_state'].get('collision_map', '')
-                if collision_map:
+                if collision_map and self.display_config['show_collision_map']:
                     logger.info(f"[Collision Map from response]\n{collision_map}")
+                elif collision_map:
+                    logger.debug(f"[Collision Map from response]\n{collision_map}")
             else:
                 # Fallback to separate calls if state not included
                 memory_info = self.client.get_state_from_memory()
-                logger.info(f"[Memory State after action]")
-                logger.info(memory_info)
+                if self.display_config['show_game_state']:
+                    logger.info(f"[Memory State after action]")
+                    logger.info(memory_info)
+                else:
+                    logger.debug(f"[Memory State after action]")
+                    logger.debug(memory_info)
                 
                 collision_map = self.client.get_collision_map()
-                if collision_map:
+                if collision_map and self.display_config['show_collision_map']:
                     logger.info(f"[Collision Map after action]\n{collision_map}")
+                elif collision_map:
+                    logger.debug(f"[Collision Map after action]\n{collision_map}")
             
             # Get screenshot from response or fetch it if not included
             if 'screenshot' in response:
@@ -361,28 +391,38 @@ The summary should be comprehensive enough that you can continue gameplay withou
                 screenshot = self.client.get_screenshot()
                 screenshot_b64 = get_screenshot_base64(screenshot, upscale=2)
             
+            # Build response content based on display configuration
+            content = [
+                {"type": "text", "text": f"Pressed buttons: {', '.join(buttons)}"},
+                {"type": "text", "text": "\nHere is a screenshot of the screen after your button presses:"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": screenshot_b64,
+                    },
+                }
+            ]
+            
+            # Add game state to Claude's view if enabled
+            content.append({"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"})
+            
             # Return tool result as a dictionary
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_call.id,
-                "content": [
-                    {"type": "text", "text": f"Pressed buttons: {', '.join(buttons)}"},
-                    {"type": "text", "text": "\nHere is a screenshot of the screen after your button presses:"},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
-                        },
-                    },
-                    {"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"},
-                ],
+                "content": content,
             }
         elif tool_name == "navigate_to":
             row = tool_input["row"]
             col = tool_input["col"]
-            logger.info(f"[Navigation] Navigating to: ({row}, {col})")
+            
+            # Log the navigation action
+            if self.display_config['quiet_mode']:
+                logger.debug(f"[Navigation] Navigating to: ({row}, {col})")
+            else:
+                logger.info(f"[Navigation] Navigating to: ({row}, {col})")
             
             # Use enhanced client method to get result, state, and screenshot in one call
             response = self.client.navigate(
@@ -404,21 +444,33 @@ The summary should be comprehensive enough that you can continue gameplay withou
             # Get game state from response or fetch it if not included
             if 'game_state' in response:
                 memory_info = response['game_state'].get('game_state', '')
-                logger.info(f"[Memory State from response]")
-                logger.info(memory_info)
+                if self.display_config['show_game_state']:
+                    logger.info(f"[Memory State from response]")
+                    logger.info(memory_info)
+                else:
+                    logger.debug(f"[Memory State from response]")
+                    logger.debug(memory_info)
                 
                 collision_map = response['game_state'].get('collision_map', '')
-                if collision_map:
+                if collision_map and self.display_config['show_collision_map']:
                     logger.info(f"[Collision Map from response]\n{collision_map}")
+                elif collision_map:
+                    logger.debug(f"[Collision Map from response]\n{collision_map}")
             else:
                 # Fallback to separate calls if state not included
                 memory_info = self.client.get_state_from_memory()
-                logger.info(f"[Memory State after action]")
-                logger.info(memory_info)
+                if self.display_config['show_game_state']:
+                    logger.info(f"[Memory State after action]")
+                    logger.info(memory_info)
+                else:
+                    logger.debug(f"[Memory State after action]")
+                    logger.debug(memory_info)
                 
                 collision_map = self.client.get_collision_map()
-                if collision_map:
+                if collision_map and self.display_config['show_collision_map']:
                     logger.info(f"[Collision Map after action]\n{collision_map}")
+                elif collision_map:
+                    logger.debug(f"[Collision Map after action]\n{collision_map}")
             
             # Get screenshot from response or fetch it if not included
             if 'screenshot' in response:
@@ -427,23 +479,28 @@ The summary should be comprehensive enough that you can continue gameplay withou
                 screenshot = self.client.get_screenshot()
                 screenshot_b64 = get_screenshot_base64(screenshot, upscale=2)
             
+            # Build response content based on display configuration
+            content = [
+                {"type": "text", "text": f"Navigation result: {result}"},
+                {"type": "text", "text": "\nHere is a screenshot of the screen after navigation:"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": screenshot_b64,
+                    },
+                }
+            ]
+            
+            # Add game state to Claude's view if enabled
+            content.append({"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"})
+            
             # Return tool result as a dictionary
             return {
                 "type": "tool_result",
                 "tool_use_id": tool_call.id,
-                "content": [
-                    {"type": "text", "text": f"Navigation result: {result}"},
-                    {"type": "text", "text": "\nHere is a screenshot of the screen after navigation:"},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": screenshot_b64,
-                        },
-                    },
-                    {"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"},
-                ],
+                "content": content,
             }
         else:
             logger.error(f"Unknown tool called: {tool_name}")
@@ -461,7 +518,10 @@ The summary should be comprehensive enough that you can continue gameplay withou
         Args:
             num_steps: Number of steps to run for
         """
-        logger.info(f"Starting agent loop for {num_steps} steps")
+        if self.display_config['quiet_mode']:
+            logger.debug(f"Starting agent loop for {num_steps} steps")
+        else:
+            logger.info(f"Starting agent loop for {num_steps} steps")
 
         steps_completed = 0
         while self.running and steps_completed < num_steps:
@@ -475,7 +535,6 @@ The summary should be comprehensive enough that you can continue gameplay withou
                     if len(messages) >= 5 and messages[-3]["role"] == "user" and isinstance(messages[-3]["content"], list) and messages[-3]["content"]:
                         messages[-3]["content"][-1]["cache_control"] = {"type": "ephemeral"}
 
-
                 # Get model response
                 response = self.anthropic.messages.create(
                     model=MODEL_NAME,
@@ -486,7 +545,11 @@ The summary should be comprehensive enough that you can continue gameplay withou
                     temperature=TEMPERATURE,
                 )
 
-                logger.info(f"Response usage: {response.usage}")
+                # Log token usage
+                if self.display_config['quiet_mode']:
+                    logger.debug(f"Response usage: {response.usage}")
+                else:
+                    logger.info(f"Response usage: {response.usage}")
 
                 # Extract tool calls
                 tool_calls = [
@@ -496,9 +559,14 @@ The summary should be comprehensive enough that you can continue gameplay withou
                 # Display the model's reasoning
                 for block in response.content:
                     if block.type == "text":
-                        logger.info(f"[Text] {block.text}")
+                        # Claude's thoughts should always be visible, even in quiet mode
+                        logger.info(f"[Claude] {block.text}")
                     elif block.type == "tool_use":
-                        logger.info(f"[Tool] Using tool: {block.name}")
+                        # Tool calls should be visible at info level by default
+                        if self.display_config['quiet_mode']:
+                            logger.info(f"[Claude Action] Using tool: {block.name} with input: {block.input}")
+                        else:
+                            logger.info(f"[Tool Use] {block.name} with input: {block.input}")
 
                 # Process tool calls
                 if tool_calls:
@@ -530,7 +598,10 @@ The summary should be comprehensive enough that you can continue gameplay withou
                         self.summarize_history()
 
                 steps_completed += 1
-                logger.info(f"Completed step {steps_completed}/{num_steps}")
+                if self.display_config['quiet_mode']:
+                    logger.debug(f"Completed step {steps_completed}/{num_steps}")
+                else:
+                    logger.info(f"Completed step {steps_completed}/{num_steps}")
 
             except KeyboardInterrupt:
                 logger.info("Received keyboard interrupt, stopping")
@@ -546,7 +617,10 @@ The summary should be comprehensive enough that you can continue gameplay withou
 
     def summarize_history(self):
         """Generate a summary of the conversation history and replace the history with just the summary."""
-        logger.info(f"[Agent] Generating conversation summary...")
+        if self.display_config['quiet_mode']:
+            logger.debug(f"[Agent] Generating conversation summary...")
+        else:
+            logger.info(f"[Agent] Generating conversation summary...")
         
         # Get a new screenshot for the summary
         screenshot = self.client.get_screenshot()
@@ -554,7 +628,6 @@ The summary should be comprehensive enough that you can continue gameplay withou
         
         # Create messages for the summarization request - pass the entire conversation history
         messages = copy.deepcopy(self.message_history) 
-
 
         if len(messages) >= 3:
             if messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list) and messages[-1]["content"]:
@@ -587,7 +660,8 @@ The summary should be comprehensive enough that you can continue gameplay withou
         # Extract the summary text
         summary_text = " ".join([block.text for block in response.content if block.type == "text"])
         
-        logger.info(f"[Agent] Game Progress Summary:")
+        # Log the summary - use info level even in quiet mode as it's important
+        logger.info(f"[Claude Summary] Game Progress Summary:")
         logger.info(f"{summary_text}")
         
         # Replace message history with just the summary
@@ -619,7 +693,10 @@ The summary should be comprehensive enough that you can continue gameplay withou
             }
         ]
         
-        logger.info(f"[Agent] Message history condensed into summary.")
+        if self.display_config['quiet_mode']:
+            logger.debug(f"[Agent] Message history condensed into summary.")
+        else:
+            logger.info(f"[Agent] Message history condensed into summary.")
         
     def stop(self):
         """Stop the agent."""
@@ -634,20 +711,77 @@ def parse_arguments():
     parser.add_argument('--api-key', type=str, help='Morph API key (defaults to MORPH_API_KEY env var)')
     parser.add_argument('--steps', type=int, default=10, help='Number of steps to run (default: 10)')
     parser.add_argument('--max-history', type=int, default=30, help='Maximum history size before summarizing (default: 30)')
+    
+    # Add verbosity and display options
+    parser.add_argument('--verbose', '-v', action='count', default=0, 
+                        help='Increase output verbosity (can be used multiple times, e.g. -vv)')
+    parser.add_argument('--show-game-state', action='store_true', 
+                        help='Show full game state information in the logs')
+    parser.add_argument('--show-collision-map', action='store_true', 
+                        help='Show collision map in the logs')
+    parser.add_argument('--log-file', type=str, 
+                        help='Path to log file. If not provided, logs will only go to stderr')
+    parser.add_argument('--quiet', '-q', action='store_true',
+                        help='Only show Claude\'s thoughts and actions, minimal logging')
+    
     return parser.parse_args()
 
 def main():
     args = parse_arguments()
     
-    print(f"Starting Pokemon Game Server Agent from snapshot {args.snapshot_id}")
-    print(f"Will run for {args.steps} steps with max history of {args.max_history}")
-    print("=" * 50)
+    # Configure logging based on command line arguments
+    log_handlers = []
+    
+    # Set up console handler with formatting
+    console_handler = logging.StreamHandler()
+    if args.quiet:
+        console_format = "%(message)s"  # Minimal format for quiet mode
+    else:
+        console_format = "%(asctime)s - %(levelname)s - %(message)s"
+    
+    console_handler.setFormatter(logging.Formatter(console_format))
+    log_handlers.append(console_handler)
+    
+    # Add file handler if log file specified
+    if args.log_file:
+        file_handler = logging.FileHandler(args.log_file)
+        # Full detailed format for log files
+        file_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        file_handler.setFormatter(logging.Formatter(file_format))
+        log_handlers.append(file_handler)
+    
+    # Set log level based on verbosity
+    if args.quiet:
+        log_level = logging.WARNING
+    elif args.verbose == 0:
+        log_level = logging.INFO
+    elif args.verbose == 1:
+        log_level = logging.DEBUG
+    else:  # args.verbose >= 2
+        log_level = logging.DEBUG  # Maximum verbosity
+    
+    # Configure the root logger
+    logging.basicConfig(level=log_level, handlers=log_handlers, force=True)
+    
+    # Create a rich console for nice output
+    from rich.console import Console
+    console = Console()
+    
+    console.print(f"Starting Pokemon Game Server Agent from snapshot {args.snapshot_id}")
+    console.print(f"Will run for {args.steps} steps with max history of {args.max_history}")
+    if not args.quiet:
+        console.print(f"Log level: {'QUIET' if args.quiet else logging.getLevelName(log_level)}")
+        if args.show_game_state:
+            console.print("Game state display: Enabled")
+        if args.show_collision_map:
+            console.print("Collision map display: Enabled")
+        if args.log_file:
+            console.print(f"Logging to file: {args.log_file}")
+    console.print("=" * 50)
     
     # Initialize Morph client and start instance
     from morphcloud.api import MorphCloudClient
-    from rich.console import Console
     
-    console = Console()
     morph_client = MorphCloudClient(api_key=args.api_key)
     
     # Start instance from snapshot
@@ -662,8 +796,20 @@ def main():
     instance_url = next(service.url for service in instance.networking.http_services if service.name == "web")
     
     remote_desktop_url = next(service.url for service in instance.networking.http_services if service.name == "novnc")
+    
+    novnc_url = f"{remote_desktop_url}/vnc_lite.html"
+    console.print(f"Pokemon remote desktop available at: {novnc_url}")
 
-    console.print(f"Pokemon remote desktop available at: {remote_desktop_url}/vnc_lite.html")
+    # Open the NoVNC URL automatically in the default browser
+    import webbrowser
+    webbrowser.open(novnc_url)
+    
+    # Create a "game display" configuration object to pass to the agent
+    display_config = {
+        'show_game_state': args.show_game_state or args.verbose > 0,
+        'show_collision_map': args.show_collision_map or args.verbose > 1,
+        'quiet_mode': args.quiet
+    }
     
     # Run agent with the instance URL
     console.print("Initializing agent...")
@@ -671,7 +817,8 @@ def main():
         agent = ServerAgent(
             server_host=instance_url,
             server_port=None,  # Not needed since URL already includes the port
-            max_history=args.max_history
+            max_history=args.max_history,
+            display_config=display_config
         )
         
         console.print("✅ Agent initialized successfully!")

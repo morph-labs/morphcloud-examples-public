@@ -33,18 +33,48 @@ This command will:
 
 ## Command Line Options
 
-- `--snapshot-id`: (Required) The MorphCloud snapshot ID to run
+### Required Arguments:
+- `--snapshot-id`: The MorphCloud snapshot ID to run
+
+### Basic Configuration:
 - `--api-key`: Your MorphCloud API key (defaults to MORPH_API_KEY environment variable)
 - `--steps`: Number of agent steps to run (default: 10)
 - `--max-history`: Maximum history size before summarizing conversation (default: 30)
 
-## Example
+### Logging and Display Options:
+- `--verbose`, `-v`: Increase output verbosity (can be stacked, e.g., `-vv` for maximum detail)
+- `--quiet`, `-q`: Only show Claude's thoughts and actions, minimal logging
+- `--show-game-state`: Show full game state information in the logs
+- `--show-collision-map`: Show collision map in the logs
+- `--log-file PATH`: Write logs to a file at the specified path
 
+The agent will automatically open a browser window with the NoVNC interface so you can watch the gameplay in real-time.
+
+## Examples
+
+### Basic Run:
 ```bash
 uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20
 ```
+This will run the agent for 20 steps using the specified snapshot with default logging.
 
-This will run the agent for 20 steps using the specified snapshot.
+### Quiet Mode (Only Claude's Thoughts and Actions):
+```bash
+uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20 --quiet
+```
+This will run the agent showing only Claude's thoughts and actions, with minimal technical logging.
+
+### Detailed Logging with Game State:
+```bash
+uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20 --verbose --show-game-state
+```
+This will run the agent with detailed logging including the game state information.
+
+### Maximum Verbosity with Log File:
+```bash
+uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20 -vv --show-game-state --show-collision-map --log-file pokemon_run.log
+```
+This will run the agent with maximum verbosity, showing all game state information, collision maps, and writing logs to a file.
 
 ## How to Extend
 
