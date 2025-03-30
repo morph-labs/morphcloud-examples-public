@@ -173,18 +173,18 @@ class TaskDefinition:
 # Define all available tasks
 REGISTERED_TASKS = [
     TaskDefinition(
-        id="beat-brock",
-        instruction="Defeat Brock at Pewter Gym and obtain the Boulder Badge",
-        verification_fn_name="verify_beat_first_gym",
-        verification_message="Defeat Brock to acquire the Boulder Badge.",
-        metadata={"game": "Pokemon Red", "objective": "first_gym"},
-    ),
-    TaskDefinition(
         id="escape-mt-moon",
         instruction="Navigate through Mount Moon and exit to Route 4",
         verification_fn_name="verify_escape_mount_moon",
         verification_message="Reach Route 4 after leaving Mt. Moon.",
         metadata={"game": "Pokemon Red", "objective": "mount_moon"},
+    ),
+    TaskDefinition(
+        id="beat-brock",
+        instruction="Defeat Brock at Pewter Gym and obtain the Boulder Badge",
+        verification_fn_name="verify_beat_first_gym",
+        verification_message="Defeat Brock to acquire the Boulder Badge.",
+        metadata={"game": "Pokemon Red", "objective": "first_gym"},
     ),
     TaskDefinition(
         id="check-player-names",
