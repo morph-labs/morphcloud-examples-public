@@ -46,4 +46,95 @@ uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20
 
 This will run the agent for 20 steps using the specified snapshot.
 
+## How to Extend
+
+This minimal agent is designed to be easily extended and customized. Here are several ways you can modify the agent to improve its capabilities:
+
+### Modifying the Agent's Behavior
+
+The agent's behavior is primarily controlled by the `SYSTEM_PROMPT` in the `ServerAgent` class (around line 251). You can modify this prompt to:
+- Change the agent's goals and objectives
+- Add specific gameplay strategies
+- Include Pokemon knowledge or tips
+- Adjust the tone or personality
+
+```python
+# In minimal_agent.py, modify the SYSTEM_PROMPT (line 251):
+SYSTEM_PROMPT = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands.
+
+Your goal is to play through Pokemon Red and eventually defeat the Elite Four. Make decisions based on what you see on the screen.
+
+# Add specialized knowledge or strategies here:
+When selecting Pokemon, prioritize having a balanced team with different types.
+During battles, consider type advantages and status effects.
+
+Before each action, explain your reasoning briefly, then use the emulator tool to execute your chosen commands."""
+```
+
+### Extending Tools and Actions
+
+The agent currently supports two main tools defined in `AVAILABLE_TOOLS` (around line 270):
+1. `press_buttons`: For basic Game Boy button control
+2. `navigate_to`: For automatic navigation (when `USE_NAVIGATOR` is enabled)
+
+You can extend the agent's capabilities by:
+- Adding new tools to the `AVAILABLE_TOOLS` list
+- Enhancing existing tools with additional functionality 
+- Implementing tool handlers in the `process_tool_call` method (around line 316)
+
+Example of adding a new tool:
+
+```python
+# Add a new tool to AVAILABLE_TOOLS (after line 314):
+AVAILABLE_TOOLS.append({
+    "name": "check_pokemon_team",
+    "description": "Get information about your current Pokemon team.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "detail_level": {
+                "type": "string",
+                "enum": ["basic", "detailed"],
+                "description": "Level of detail for team information."
+            }
+        },
+        "required": [],
+    },
+})
+
+# Then implement the handler in process_tool_call (around line 450):
+elif tool_name == "check_pokemon_team":
+    detail_level = tool_input.get("detail_level", "basic")
+    # Implement the logic to get team information
+    team_info = "Your team: Charizard Lv.36, Pikachu Lv.28..."
+    
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_call.id,
+        "content": [
+            {"type": "text", "text": f"Pokemon Team ({detail_level}):\n{team_info}"}
+        ],
+    }
+```
+
+### Configuration Parameters
+
+Key parameters you can adjust (found at the top of the file around line 37):
+- `MAX_TOKENS`: Maximum response length
+- `MODEL_NAME`: Claude model to use
+- `TEMPERATURE`: Controls creativity (higher is more creative)
+- `USE_NAVIGATOR`: Enables/disables navigation tool
+- `max_history`: Controls conversation summarization threshold
+
+### Example Extensions
+
+Some ideas for extending the agent:
+- Add a tool to display Pokemon team status
+- Implement battle strategy analysis tools
+- Create checkpoints to save game progress
+- Add performance metrics or gameplay logging
+- Extend the emulator client with advanced ROM manipulation
+
+To implement these extensions, modify the `minimal_agent.py` file and add any necessary helper functions or classes.
+
 
