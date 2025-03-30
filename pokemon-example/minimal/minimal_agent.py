@@ -557,11 +557,14 @@ The summary should be comprehensive enough that you can continue gameplay withou
                 ],
             }
 
-    def run(self, num_steps=1):
+    def run(self, num_steps=1, morph_client=None, instance_id=None, snapshot_name_prefix=None):
         """Main agent loop.
 
         Args:
             num_steps: Number of steps to run for
+            morph_client: MorphCloudClient instance for creating snapshots
+            instance_id: ID of the current instance
+            snapshot_name_prefix: Prefix for snapshot names
         """
         if self.display_config["quiet_mode"]:
             logger.debug(f"Starting agent loop for {num_steps} steps")
@@ -569,6 +572,8 @@ The summary should be comprehensive enough that you can continue gameplay withou
             logger.info(f"Starting agent loop for {num_steps} steps")
 
         steps_completed = 0
+        snapshots = []
+        
         while self.running and steps_completed < num_steps:
             try:
                 messages = copy.deepcopy(self.message_history)
@@ -668,6 +673,27 @@ The summary should be comprehensive enough that you can continue gameplay withou
                     logger.debug(f"Completed step {steps_completed}/{num_steps}")
                 else:
                     logger.info(f"Completed step {steps_completed}/{num_steps}")
+                
+                # Create a snapshot after each step if morph_client is provided
+                if morph_client and instance_id:
+                    step_num = steps_completed
+                    snapshot_name = f"{snapshot_name_prefix}_step_{step_num}" if snapshot_name_prefix else f"pokemon_step_{step_num}"
+                    
+                    logger.info(f"Creating snapshot after step {step_num}...")
+                    try:
+                        snapshot = morph_client.snapshots.create(
+                            instance_id=instance_id,
+                            name=snapshot_name
+                        )
+                        logger.info(f"✅ Snapshot created with ID: {snapshot.id}")
+                        # Keep track of all snapshots
+                        snapshots.append({
+                            'step': step_num,
+                            'snapshot_id': snapshot.id,
+                            'name': snapshot_name
+                        })
+                    except Exception as e:
+                        logger.error(f"Failed to create snapshot: {e}")
 
             except KeyboardInterrupt:
                 logger.info("Received keyboard interrupt, stopping")
@@ -680,7 +706,7 @@ The summary should be comprehensive enough that you can continue gameplay withou
         if not self.running:
             self.client.stop()
 
-        return steps_completed
+        return steps_completed, snapshots
 
     def summarize_history(self):
         """Generate a summary of the conversation history and replace the history with just the summary."""
@@ -830,7 +856,11 @@ def parse_arguments():
         action="store_true",
         help="Only show Claude's thoughts and actions, minimal logging",
     )
-
+    parser.add_argument(
+        "--no-browser", 
+        action="store_true",
+        help="Suppress auto-opening the browser to display the game",
+    )
     return parser.parse_args()
 
 
@@ -921,9 +951,11 @@ def main():
     novnc_url = f"{remote_desktop_url}/vnc_lite.html"
     console.print(f"Pokemon remote desktop available at: {novnc_url}")
 
-    # Open the NoVNC URL automatically in the default browser
-    webbrowser.open(novnc_url)
-
+    # Open the NoVNC URL automatically in the default browser if not suppressed
+    if not args.no_browser:
+        webbrowser.open(novnc_url)
+    else:
+        console.print("Browser auto-open suppressed. Use the URL above to view the game.")
     # Create a "game display" configuration object to pass to the agent
     display_config = {
         "show_game_state": args.show_game_state or args.verbose > 0,

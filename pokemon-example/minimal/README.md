@@ -47,8 +47,9 @@ This command will:
 - `--show-game-state`: Show full game state information in the logs
 - `--show-collision-map`: Show collision map in the logs
 - `--log-file PATH`: Write logs to a file at the specified path
+- `--no-browser`: Suppress automatically opening the game in a browser window
 
-The agent will automatically open a browser window with the NoVNC interface so you can watch the gameplay in real-time.
+The agent will automatically open a browser window with the NoVNC interface so you can watch the gameplay in real-time. You can suppress this behavior with the `--no-browser` flag.
 
 ## Examples
 
@@ -75,6 +76,25 @@ This will run the agent with detailed logging including the game state informati
 uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20 -vv --show-game-state --show-collision-map --log-file pokemon_run.log
 ```
 This will run the agent with maximum verbosity, showing all game state information, collision maps, and writing logs to a file.
+
+### Running Without Browser Auto-open:
+```bash
+uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20 --no-browser
+```
+This will run the agent without automatically opening a browser window. The URL for accessing the game will still be printed in the console.
+
+### Using the Dashboard UI:
+```bash
+uv run dashboard.py
+```
+This will:
+1. Start a web interface on http://127.0.0.1:5001/
+2. Open the UI automatically in your default browser
+3. Allow you to input your snapshot ID and configure steps
+4. Show agent logs and display the game in a single interface
+5. Let you start and stop the agent at any time
+
+The dashboard runs the agent with the `--no-browser` flag automatically to prevent opening duplicate browser windows.
 
 ## How to Extend
 
