@@ -174,9 +174,9 @@ class TaskDefinition:
 REGISTERED_TASKS = [
     TaskDefinition(
         id="escape-mt-moon",
-        instruction="Navigate through Mount Moon and exit to Route 4",
+        instruction="Navigate through Mount Moon towards Cerulean City",
         verification_fn_name="verify_escape_mount_moon",
-        verification_message="Reach Route 4 after leaving Mt. Moon.",
+        verification_message="Reach Cerulean City after getting through Mt. Moon.",
         metadata={"game": "Pokemon Red", "objective": "mount_moon"},
     ),
     TaskDefinition(
