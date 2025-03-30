@@ -1,0 +1,705 @@
+## /// script
+# dependencies = [
+#   "requests",
+#   "pillow",
+#   "anthropic",
+#   "morphcloud",
+#   "rich",
+# ]
+# /// 
+
+#!/usr/bin/env python3
+"""
+Run a non-interactive server agent that plays Pokemon automatically.
+This script combines the EmulatorClient, ServerAgent, and runner into a single file.
+"""
+import argparse
+import base64
+import copy
+import io
+import json
+import logging
+import os
+import requests
+import sys
+from PIL import Image
+from anthropic import Anthropic
+from morphcloud.api import MorphCloudClient
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Configuration
+MAX_TOKENS = 4096
+MODEL_NAME = "claude-3-7-sonnet-20250219"
+TEMPERATURE = 0.7
+USE_NAVIGATOR = True
+
+
+class EmulatorClient:
+    def __init__(self, host='127.0.0.1', port=9876):
+        # Check if host already includes the protocol, if not add http://
+        if host.startswith('http://') or host.startswith('https://'):
+            # For MorphVM URLs, don't append port as it's handled by the URL routing
+            if "cloud.morph.so" in host or port is None:
+                self.base_url = host
+            # For other URLs, handle port as before
+            elif ":" not in host.split('/')[-1]:
+                self.base_url = f"{host}:{port}"
+            else:
+                # Host already has port, use it as is
+                self.base_url = host
+        else:
+            # For MorphVM URLs, don't append port
+            if "cloud.morph.so" in host:
+                self.base_url = f"https://{host}"
+            else:
+                self.base_url = f"http://{host}:{port}"
+        logger.info(f"Initialized client connecting to {self.base_url}")
+        
+    def get_screenshot(self):
+        """Get current screenshot as PIL Image"""
+        response = requests.get(f"{self.base_url}/api/screenshot")
+        if response.status_code != 200:
+            logger.error(f"Error getting screenshot: {response.status_code}")
+            return None
+        return Image.open(io.BytesIO(response.content))
+    
+    def get_screenshot_base64(self):
+        """Get current screenshot as base64 string"""
+        response = requests.get(f"{self.base_url}/api/screenshot")
+        if response.status_code != 200:
+            logger.error(f"Error getting screenshot: {response.status_code}")
+            return ""
+        return base64.b64encode(response.content).decode('utf-8')
+    
+    def get_game_state(self):
+        """Get complete game state from server"""
+        response = requests.get(f"{self.base_url}/api/game_state")
+        if response.status_code != 200:
+            logger.error(f"Error response from server: {response.status_code} - {response.text}")
+            return {}
+        try:
+            return response.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}")
+            logger.error(f"Response content: {response.text[:100]}...")
+            return {}
+    
+    # Compatibility methods to match Emulator interface
+    def get_state_from_memory(self):
+        """Get game state string - mimics Emulator.get_state_from_memory()"""
+        state_data = self.get_game_state()
+        return state_data.get('game_state', '')
+    
+    def get_collision_map(self):
+        """Get collision map - mimics Emulator.get_collision_map()"""
+        state_data = self.get_game_state()
+        return state_data.get('collision_map', '')
+    
+    def get_valid_moves(self):
+        """Get valid moves - mimics Emulator.get_valid_moves()"""
+        state_data = self.get_game_state()
+        return state_data.get('valid_moves', [])
+    
+    def find_path(self, row, col):
+        """Find path to position - mimics Emulator.find_path()"""
+        result = self.navigate(row, col)
+        if not isinstance(result, dict):
+            return "Failed to navigate", []
+        return result.get('status', 'Navigation failed'), result.get('path', [])
+    
+    def press_buttons(self, buttons, wait=True, include_state=False, include_screenshot=False):
+        """Press a sequence of buttons on the Game Boy
+        
+        Args:
+            buttons: List of buttons to press
+            wait: Whether to pause briefly after each button press
+            include_state: Whether to include game state in response
+            include_screenshot: Whether to include screenshot in response
+            
+        Returns:
+            dict: Response data which may include button press result, game state, and screenshot
+        """
+        data = {
+            "buttons": buttons,
+            "wait": wait,
+            "include_state": include_state,
+            "include_screenshot": include_screenshot
+        }
+        response = requests.post(f"{self.base_url}/api/press_buttons", json=data)
+        if response.status_code != 200:
+            logger.error(f"Error pressing buttons: {response.status_code} - {response.text}")
+            return {"error": f"Error: {response.status_code}"}
+        
+        return response.json()
+    
+    def navigate(self, row, col, include_state=False, include_screenshot=False):
+        """Navigate to a specific position on the grid
+        
+        Args:
+            row: Target row coordinate
+            col: Target column coordinate
+            include_state: Whether to include game state in response
+            include_screenshot: Whether to include screenshot in response
+            
+        Returns:
+            dict: Response data which may include navigation result, game state, and screenshot
+        """
+        data = {
+            "row": row,
+            "col": col,
+            "include_state": include_state,
+            "include_screenshot": include_screenshot
+        }
+        response = requests.post(f"{self.base_url}/api/navigate", json=data)
+        if response.status_code != 200:
+            logger.error(f"Error navigating: {response.status_code} - {response.text}")
+            return {"status": f"Error: {response.status_code}", "path": []}
+        
+        return response.json()
+    
+    def read_memory(self, address):
+        """Read a specific memory address"""
+        response = requests.get(f"{self.base_url}/api/memory/{address}")
+        if response.status_code != 200:
+            logger.error(f"Error reading memory: {response.status_code} - {response.text}")
+            return {"error": f"Error: {response.status_code}"}
+        return response.json()
+    
+    def load_state(self, state_path):
+        """Load a saved state"""
+        data = {
+            "state_path": state_path
+        }
+        response = requests.post(f"{self.base_url}/api/load_state", json=data)
+        if response.status_code != 200:
+            logger.error(f"Error loading state: {response.status_code} - {response.text}")
+            return {"error": f"Error: {response.status_code}"}
+        return response.json()
+    
+    def save_screenshot(self, filename="screenshot.png"):
+        """Save current screenshot to a file"""
+        screenshot = self.get_screenshot()
+        if screenshot:
+            screenshot.save(filename)
+            logger.info(f"Screenshot saved as {filename}")
+            return True
+        return False
+    
+    def initialize(self):
+        """Empty initialize method for compatibility with Emulator"""
+        logger.info("Client initialization requested (compatibility method)")
+        # Check if server is ready
+        try:
+            response = requests.get(f"{self.base_url}/api/status")
+            status = response.json()
+            ready = status.get('ready', False)
+            if ready:
+                logger.info("Server reports ready status")
+            else:
+                logger.warning("Server reports not ready")
+            return ready
+        except Exception as e:
+            logger.error(f"Error checking server status: {e}")
+            return False
+    
+    def stop(self):
+        """Empty stop method for compatibility with Emulator"""
+        logger.info("Client stop requested (compatibility method)")
+        # Nothing to do for client
+        pass
+
+
+def get_screenshot_base64(screenshot, upscale=1):
+    """Convert PIL image to base64 string."""
+    # Resize if needed
+    if upscale > 1:
+        new_size = (screenshot.width * upscale, screenshot.height * upscale)
+        screenshot = screenshot.resize(new_size)
+
+    # Convert to base64
+    buffered = io.BytesIO()
+    screenshot.save(buffered, format="PNG")
+    return base64.standard_b64encode(buffered.getvalue()).decode()
+
+
+class ServerAgent:
+    def __init__(self, server_host='127.0.0.1', server_port=9876, max_history=60):
+        """Initialize the server agent.
+
+        Args:
+            server_host: Host where the game server is running
+            server_port: Port number of the game server
+            max_history: Maximum number of messages in history before summarization
+        """
+        self.client = EmulatorClient(host=server_host, port=server_port)
+        self.anthropic = Anthropic()
+        self.running = True
+        self.message_history = [{"role": "user", "content": "You may now begin playing."}]
+        self.max_history = max_history
+        
+        # Check if the server is ready
+        if not self.client.initialize():
+            logger.error("Server not ready - please start the server before running the agent")
+            raise RuntimeError("Server not ready")
+
+    SYSTEM_PROMPT = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands.
+
+Your goal is to play through Pokemon Red and eventually defeat the Elite Four. Make decisions based on what you see on the screen.
+
+Before each action, explain your reasoning briefly, then use the emulator tool to execute your chosen commands.
+
+The conversation history may occasionally be summarized to save context space. If you see a message labeled "CONVERSATION HISTORY SUMMARY", this contains the key information about your progress so far. Use this information to maintain continuity in your gameplay."""
+
+    SUMMARY_PROMPT = """I need you to create a detailed summary of our conversation history up to this point. This summary will replace the full conversation history to manage the context window.
+
+Please include:
+1. Key game events and milestones you've reached
+2. Important decisions you've made
+3. Current objectives or goals you're working toward
+4. Your current location and Pokémon team status
+5. Any strategies or plans you've mentioned
+
+The summary should be comprehensive enough that you can continue gameplay without losing important context about what has happened so far."""
+
+    AVAILABLE_TOOLS = [
+        {
+            "name": "press_buttons",
+            "description": "Press a sequence of buttons on the Game Boy.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "buttons": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["a", "b", "start", "select", "up", "down", "left", "right"]
+                        },
+                        "description": "List of buttons to press in sequence. Valid buttons: 'a', 'b', 'start', 'select', 'up', 'down', 'left', 'right'"
+                    },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "Whether to wait for a brief period after pressing each button. Defaults to true."
+                    }
+                },
+                "required": ["buttons"],
+            },
+        }
+    ]
+
+    # Add navigation tool if enabled
+    if USE_NAVIGATOR:
+        AVAILABLE_TOOLS.append({
+            "name": "navigate_to",
+            "description": "Automatically navigate to a position on the map grid. The screen is divided into a 9x10 grid, with the top-left corner as (0, 0). This tool is only available in the overworld.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "row": {
+                        "type": "integer",
+                        "description": "The row coordinate to navigate to (0-8)."
+                    },
+                    "col": {
+                        "type": "integer",
+                        "description": "The column coordinate to navigate to (0-9)."
+                    }
+                },
+                "required": ["row", "col"],
+            },
+        })
+
+    def process_tool_call(self, tool_call):
+        """Process a single tool call."""
+        tool_name = tool_call.name
+        tool_input = tool_call.input
+        logger.info(f"Processing tool call: {tool_name}")
+
+        if tool_name == "press_buttons":
+            buttons = tool_input["buttons"]
+            wait = tool_input.get("wait", True)
+            logger.info(f"[Buttons] Pressing: {buttons} (wait={wait})")
+            
+            # Use enhanced client method to get result, state, and screenshot in one call
+            response = self.client.press_buttons(
+                buttons, 
+                wait=wait, 
+                include_state=True, 
+                include_screenshot=True
+            )
+            
+            # Extract results from response
+            result = response.get('result', f"Pressed buttons: {', '.join(buttons)}")
+            
+            # Get game state from response or fetch it if not included
+            if 'game_state' in response:
+                memory_info = response['game_state'].get('game_state', '')
+                logger.info(f"[Memory State from response]")
+                logger.info(memory_info)
+                
+                collision_map = response['game_state'].get('collision_map', '')
+                if collision_map:
+                    logger.info(f"[Collision Map from response]\n{collision_map}")
+            else:
+                # Fallback to separate calls if state not included
+                memory_info = self.client.get_state_from_memory()
+                logger.info(f"[Memory State after action]")
+                logger.info(memory_info)
+                
+                collision_map = self.client.get_collision_map()
+                if collision_map:
+                    logger.info(f"[Collision Map after action]\n{collision_map}")
+            
+            # Get screenshot from response or fetch it if not included
+            if 'screenshot' in response:
+                screenshot_b64 = response['screenshot']
+            else:
+                screenshot = self.client.get_screenshot()
+                screenshot_b64 = get_screenshot_base64(screenshot, upscale=2)
+            
+            # Return tool result as a dictionary
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": [
+                    {"type": "text", "text": f"Pressed buttons: {', '.join(buttons)}"},
+                    {"type": "text", "text": "\nHere is a screenshot of the screen after your button presses:"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": screenshot_b64,
+                        },
+                    },
+                    {"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"},
+                ],
+            }
+        elif tool_name == "navigate_to":
+            row = tool_input["row"]
+            col = tool_input["col"]
+            logger.info(f"[Navigation] Navigating to: ({row}, {col})")
+            
+            # Use enhanced client method to get result, state, and screenshot in one call
+            response = self.client.navigate(
+                row, 
+                col, 
+                include_state=True, 
+                include_screenshot=True
+            )
+            
+            # Extract navigation result
+            status = response.get('status', 'Unknown status')
+            path = response.get('path', [])
+            
+            if path:
+                result = f"Navigation successful: followed path with {len(path)} steps"
+            else:
+                result = f"Navigation failed: {status}"
+            
+            # Get game state from response or fetch it if not included
+            if 'game_state' in response:
+                memory_info = response['game_state'].get('game_state', '')
+                logger.info(f"[Memory State from response]")
+                logger.info(memory_info)
+                
+                collision_map = response['game_state'].get('collision_map', '')
+                if collision_map:
+                    logger.info(f"[Collision Map from response]\n{collision_map}")
+            else:
+                # Fallback to separate calls if state not included
+                memory_info = self.client.get_state_from_memory()
+                logger.info(f"[Memory State after action]")
+                logger.info(memory_info)
+                
+                collision_map = self.client.get_collision_map()
+                if collision_map:
+                    logger.info(f"[Collision Map after action]\n{collision_map}")
+            
+            # Get screenshot from response or fetch it if not included
+            if 'screenshot' in response:
+                screenshot_b64 = response['screenshot']
+            else:
+                screenshot = self.client.get_screenshot()
+                screenshot_b64 = get_screenshot_base64(screenshot, upscale=2)
+            
+            # Return tool result as a dictionary
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": [
+                    {"type": "text", "text": f"Navigation result: {result}"},
+                    {"type": "text", "text": "\nHere is a screenshot of the screen after navigation:"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": screenshot_b64,
+                        },
+                    },
+                    {"type": "text", "text": f"\nGame state information from memory after your action:\n{memory_info}"},
+                ],
+            }
+        else:
+            logger.error(f"Unknown tool called: {tool_name}")
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": [
+                    {"type": "text", "text": f"Error: Unknown tool '{tool_name}'"}
+                ],
+            }
+
+    def run(self, num_steps=1):
+        """Main agent loop.
+
+        Args:
+            num_steps: Number of steps to run for
+        """
+        logger.info(f"Starting agent loop for {num_steps} steps")
+
+        steps_completed = 0
+        while self.running and steps_completed < num_steps:
+            try:
+                messages = copy.deepcopy(self.message_history)
+
+                if len(messages) >= 3:
+                    if messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list) and messages[-1]["content"]:
+                        messages[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
+                    
+                    if len(messages) >= 5 and messages[-3]["role"] == "user" and isinstance(messages[-3]["content"], list) and messages[-3]["content"]:
+                        messages[-3]["content"][-1]["cache_control"] = {"type": "ephemeral"}
+
+
+                # Get model response
+                response = self.anthropic.messages.create(
+                    model=MODEL_NAME,
+                    max_tokens=MAX_TOKENS,
+                    system=self.SYSTEM_PROMPT,
+                    messages=messages,
+                    tools=self.AVAILABLE_TOOLS,
+                    temperature=TEMPERATURE,
+                )
+
+                logger.info(f"Response usage: {response.usage}")
+
+                # Extract tool calls
+                tool_calls = [
+                    block for block in response.content if block.type == "tool_use"
+                ]
+
+                # Display the model's reasoning
+                for block in response.content:
+                    if block.type == "text":
+                        logger.info(f"[Text] {block.text}")
+                    elif block.type == "tool_use":
+                        logger.info(f"[Tool] Using tool: {block.name}")
+
+                # Process tool calls
+                if tool_calls:
+                    # Add assistant message to history
+                    assistant_content = []
+                    for block in response.content:
+                        if block.type == "text":
+                            assistant_content.append({"type": "text", "text": block.text})
+                        elif block.type == "tool_use":
+                            assistant_content.append({"type": "tool_use", **dict(block)})
+                    
+                    self.message_history.append(
+                        {"role": "assistant", "content": assistant_content}
+                    )
+                    
+                    # Process tool calls and create tool results
+                    tool_results = []
+                    for tool_call in tool_calls:
+                        tool_result = self.process_tool_call(tool_call)
+                        tool_results.append(tool_result)
+                    
+                    # Add tool results to message history
+                    self.message_history.append(
+                        {"role": "user", "content": tool_results}
+                    )
+
+                    # Check if we need to summarize the history
+                    if len(self.message_history) >= self.max_history:
+                        self.summarize_history()
+
+                steps_completed += 1
+                logger.info(f"Completed step {steps_completed}/{num_steps}")
+
+            except KeyboardInterrupt:
+                logger.info("Received keyboard interrupt, stopping")
+                self.running = False
+            except Exception as e:
+                logger.error(f"Error in agent loop: {e}")
+                raise e
+
+        if not self.running:
+            self.client.stop()
+
+        return steps_completed
+
+    def summarize_history(self):
+        """Generate a summary of the conversation history and replace the history with just the summary."""
+        logger.info(f"[Agent] Generating conversation summary...")
+        
+        # Get a new screenshot for the summary
+        screenshot = self.client.get_screenshot()
+        screenshot_b64 = get_screenshot_base64(screenshot, upscale=2)
+        
+        # Create messages for the summarization request - pass the entire conversation history
+        messages = copy.deepcopy(self.message_history) 
+
+
+        if len(messages) >= 3:
+            if messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list) and messages[-1]["content"]:
+                messages[-1]["content"][-1]["cache_control"] = {"type": "ephemeral"}
+            
+            if len(messages) >= 5 and messages[-3]["role"] == "user" and isinstance(messages[-3]["content"], list) and messages[-3]["content"]:
+                messages[-3]["content"][-1]["cache_control"] = {"type": "ephemeral"}
+
+        messages += [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": self.SUMMARY_PROMPT,
+                    }
+                ],
+            }
+        ]
+        
+        # Get summary from Claude
+        response = self.anthropic.messages.create(
+            model=MODEL_NAME,
+            max_tokens=MAX_TOKENS,
+            system=self.SYSTEM_PROMPT,
+            messages=messages,
+            temperature=TEMPERATURE
+        )
+        
+        # Extract the summary text
+        summary_text = " ".join([block.text for block in response.content if block.type == "text"])
+        
+        logger.info(f"[Agent] Game Progress Summary:")
+        logger.info(f"{summary_text}")
+        
+        # Replace message history with just the summary
+        self.message_history = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"CONVERSATION HISTORY SUMMARY (representing {self.max_history} previous messages): {summary_text}"
+                    },
+                    {
+                        "type": "text",
+                        "text": "\n\nCurrent game screenshot for reference:"
+                    },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": screenshot_b64,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": "You were just asked to summarize your playthrough so far, which is the summary you see above. You may now continue playing by selecting your next action."
+                    },
+                ]
+            }
+        ]
+        
+        logger.info(f"[Agent] Message history condensed into summary.")
+        
+    def stop(self):
+        """Stop the agent."""
+        self.running = False
+        self.client.stop()
+
+
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Run a Pokemon Game Server Agent')
+    parser.add_argument('--snapshot-id', type=str, required=True, help='Morph snapshot ID to run')
+    parser.add_argument('--api-key', type=str, help='Morph API key (defaults to MORPH_API_KEY env var)')
+    parser.add_argument('--steps', type=int, default=10, help='Number of steps to run (default: 10)')
+    parser.add_argument('--max-history', type=int, default=30, help='Maximum history size before summarizing (default: 30)')
+    return parser.parse_args()
+
+def main():
+    args = parse_arguments()
+    
+    print(f"Starting Pokemon Game Server Agent from snapshot {args.snapshot_id}")
+    print(f"Will run for {args.steps} steps with max history of {args.max_history}")
+    print("=" * 50)
+    
+    # Initialize Morph client and start instance
+    from morphcloud.api import MorphCloudClient
+    from rich.console import Console
+    
+    console = Console()
+    morph_client = MorphCloudClient(api_key=args.api_key)
+    
+    # Start instance from snapshot
+    console.print("Starting instance from snapshot...")
+    instance = morph_client.instances.start(args.snapshot_id)
+    
+    # Wait for instance to be ready
+    console.print("Waiting for instance to be ready...")
+    instance.wait_until_ready()
+    
+    # Get the instance URL
+    instance_url = next(service.url for service in instance.networking.http_services if service.name == "web")
+    
+    remote_desktop_url = next(service.url for service in instance.networking.http_services if service.name == "novnc")
+
+    console.print(f"Pokemon remote desktop available at: {remote_desktop_url}/vnc_lite.html")
+    
+    # Run agent with the instance URL
+    console.print("Initializing agent...")
+    try:
+        agent = ServerAgent(
+            server_host=instance_url,
+            server_port=None,  # Not needed since URL already includes the port
+            max_history=args.max_history
+        )
+        
+        console.print("✅ Agent initialized successfully!")
+        console.print("=" * 50)
+        
+        # Run the agent
+        console.print(f"Starting agent loop for {args.steps} steps...")
+        steps_completed = agent.run(num_steps=args.steps)
+        
+        console.print("=" * 50)
+        console.print(f"✅ Agent completed {steps_completed} steps")
+        
+    except ConnectionError as e:
+        console.print(f"❌ Connection error: {e}")
+        console.print(f"Make sure the server is running on the instance")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        console.print("Received keyboard interrupt, stopping agent")
+    except Exception as e:
+        console.print(f"❌ Error: {e}")
+        sys.exit(1)
+    finally:
+        if 'agent' in locals():
+            agent.stop()
+        
+        # Stop the Morph instance
+        console.print("Stopping Morph instance...")
+        instance.stop()
+
+if __name__ == "__main__":
+    main()
