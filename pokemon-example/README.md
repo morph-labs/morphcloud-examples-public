@@ -45,7 +45,10 @@ uv pip install -r requirements.txt
 ### 5. Run the Agent
 
 ```bash
-uv run pokemon_agent_trajectory.py --snapshot-id YOUR_SNAPSHOT_ID --no-api
+export MORPH_API_KEY="YOUR API KEY"
+export ANTHROPIC_API_KEY="YOUR API KEY"
+uv run pokemon_agent_trajectory.py --snapshot-id YOUR_SNAPSHOT_ID --port 9999
+uv run trajectory_driver.py --api-port 9999 --ui-port 8080
 ```
 
 ### 6. Watch The Agent Play
