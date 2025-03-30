@@ -1010,6 +1010,7 @@ class PokemonAPI:
         self.task = None
         self.morph_instance = None
         self.running_task = None
+        self.novnc_url = None  # Store NoVNC URL for the frontend
         
         # Register routes
         self.register_routes()
@@ -1059,6 +1060,14 @@ class PokemonAPI:
                 return {"steps": [], "snapshots": []}
             
             return self.agent.trajectory.serialize()
+            
+        @self.app.get("/novnc_url")
+        async def get_novnc_url():
+            """Get the NoVNC URL for the game display."""
+            if self.novnc_url:
+                return {"url": f"{self.novnc_url}/vnc_lite.html"}
+            else:
+                return {"url": None}
         
         @self.app.post("/start")
         async def start_agent(request: AgentRequest, background_tasks: BackgroundTasks):
@@ -1177,9 +1186,11 @@ class PokemonAPI:
             mcp_url = self.morph_instance.instance.expose_http_service(name="mcp", port=8000)
             # logger.info(f"MCP server exposed at: {mcp_url}")
 
-            # 3. Connect NoVNC (just for your reference, not strictly required)
+            # 3. Connect NoVNC and store the URL for frontend access
             novnc_url = self.morph_instance.instance.expose_http_service(name="novnc", port=6080)
-            # logger.info(f"NoVNC (VNC) at: {novnc_url}/vnc_lite.html")
+            self.novnc_url = novnc_url
+            log(LogLevel.INFO, f"NoVNC (VNC) accessible at: {novnc_url}/vnc_lite.html", 
+                extra={"event_type": "novnc_url", "url": f"{novnc_url}/vnc_lite.html"})
 
             # 4. Create MCP handler
             mcp_handler = PokemonMCPHandler(f"{mcp_url}/sse")
@@ -1270,11 +1281,12 @@ class PokemonAPI:
             log(LogLevel.SUCCESS, f"MCP server exposed for rollback", 
                 extra={"mcp_url": mcp_url})
             
-            # Expose NoVNC for the UI
+            # Expose NoVNC for the UI and store the URL
             novnc_url = self.morph_instance.instance.expose_http_service(
                 name="novnc",
                 port=6080
             )
+            self.novnc_url = novnc_url
             
             log(LogLevel.INFO, f"NoVNC service available after rollback", 
                 extra={"event_type": "novnc_url", "url": f"{novnc_url}/vnc_lite.html"})

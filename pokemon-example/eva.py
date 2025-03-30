@@ -29,7 +29,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, TypeVar, Union, Tuple, override
+from typing import Any, Callable, Dict, Generic, List, Optional, Sequence, TypeVar, Union, Tuple 
 
 # Import MorphCloud API
 from morphcloud.api import MorphCloudClient, Instance, Snapshot
@@ -74,7 +74,6 @@ class JSONLFormatter(logging.Formatter):
             "message": "message"
         }
     
-    @override
     def format(self, record: logging.LogRecord) -> str:
         message = self._prepare_log_dict(record)
         return json.dumps(message, default=str)

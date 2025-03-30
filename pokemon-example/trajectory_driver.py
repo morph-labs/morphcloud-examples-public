@@ -485,6 +485,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             if (!url) return;
             const gameIframe = document.getElementById('game-iframe');
             if (gameIframe.src !== url) {
+                console.log("Setting game iframe src to:", url);
                 gameIframe.src = url;
             }
         }
@@ -577,8 +578,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 const trajRes = await fetch(`${window.API_BASE_URL}/trajectory`);
                 const trajData = await trajRes.json();
                 processTrajectoryData(trajData);
+                
+                // fetch novnc url if we don't have it yet
+                if (!window.NOVNC_URL) {
+                    const novncRes = await fetch(`${window.API_BASE_URL}/novnc_url`);
+                    const novncData = await novncRes.json();
+                    if (novncData.url) {
+                        window.NOVNC_URL = novncData.url;
+                        console.log("NoVNC URL set during polling:", window.NOVNC_URL);
+                    }
+                }
 
-                // optionally, set up NoVNC
+                // set up NoVNC if available
                 if (window.NOVNC_URL) {
                     updateGameIframe(window.NOVNC_URL);
                 }
@@ -767,8 +778,32 @@ class APIHandler(SimpleHTTPRequestHandler):
             base_domain = "127.0.0.1"  # or "localhost"
             html = HTML_TEMPLATE.replace('%API_BASE_URL%', f'http://{base_domain}:{self.api_port}')
 
-            # html = HTML_TEMPLATE.replace('%API_BASE_URL%', f'http://{self.server.server_name}:{self.api_port}')
-            # If you want to inject a known novnc_url, do so. For now, we leave window.NOVNC_URL = null
+            # Add the JavaScript to fetch the novnc_url
+            script_to_add = """
+            <script>
+                // Fetch the NoVNC URL from the API when the page loads
+                async function fetchNoVNCUrl() {
+                    try {
+                        const response = await fetch(`${window.API_BASE_URL}/novnc_url`);
+                        const data = await response.json();
+                        if (data.url) {
+                            window.NOVNC_URL = data.url;
+                            console.log("NoVNC URL set:", window.NOVNC_URL);
+                            updateGameIframe(window.NOVNC_URL);
+                        }
+                    } catch (error) {
+                        console.error("Error fetching NoVNC URL:", error);
+                    }
+                }
+                
+                // Add to onload handlers
+                window.addEventListener('load', fetchNoVNCUrl);
+            </script>
+            """
+            
+            # Insert the script before the closing body tag
+            html = html.replace('</body>', f'{script_to_add}\n</body>')
+            
             self.wfile.write(html.encode())
             return
         
