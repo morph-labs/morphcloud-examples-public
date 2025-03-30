@@ -544,7 +544,11 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
         self.pause_event = asyncio.Event()
         self.pause_event.set()  # Start unpaused
 
-        self.system_prompt = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands: check your tools! for example, 'navigate_to' can help you move in the overworld. Before each action, explain your reasoning briefly, then use the available actions to control the game"""
+        self.system_prompt = """You are playing Pokemon Red. You can see the game screen and control the game by executing emulator commands: check your tools! for example, 'navigate_to' can help you move in the overworld. 
+        
+        Before each action, explain your reasoning briefly, plan your immediate next few steps needed (low level actions, e.g. 'to reach the Cave, i need to go 1. right, 2. right, 3. right, 4. up', not high level goals) to get there, then use the available actions to execute the next step in the game. 
+        
+        The game commands always register perfectly, so if you see no reaction to them, you have made an invalid command and misunderstood the game state. In battles, when you see an attack that isn't effective, you should examine your assumptions and update your beliefs. In general, search the solution space (try different things) before getting stuck in ruts."""
         
         log(LogLevel.INFO, f"Initialized PokemonAgent", 
             extra={"model": model_name, "max_tokens": max_tokens})

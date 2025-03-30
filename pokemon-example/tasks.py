@@ -174,9 +174,9 @@ class TaskDefinition:
 REGISTERED_TASKS = [
     TaskDefinition(
         id="escape-mt-moon",
-        instruction="Navigate through Mount Moon and exit to Route 4",
+        instruction="You are about to enter Mount Moon. The entrance is on the right of the Pokemon center. Go into the cave and get through Mount Moon",
         verification_fn_name="verify_escape_mount_moon",
-        verification_message="Reach Route 4 after leaving Mt. Moon.",
+        verification_message="Enter and complete Mount Moon (you are not done).",
         metadata={"game": "Pokemon Red", "objective": "mount_moon"},
     ),
     TaskDefinition(

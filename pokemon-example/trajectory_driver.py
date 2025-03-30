@@ -328,12 +328,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <div class="controls-container">
                     <div class="form-group">
                         <label for="snapshot-id">SNAPSHOT ID:</label>
-                        <input type="text" id="snapshot-id" placeholder="e.g., snapshot_yigk8b5d">
+                        <input type="text" id="snapshot-id" value="snapshot_6p53l6c2" placeholder="e.g., snapshot_yigk8b5d">
                     </div>
                     
                     <div class="form-group">
                         <label for="steps">NUMBER OF STEPS:</label>
-                        <input type="number" id="steps" value="100" min="1">
+                        <input type="number" id="steps" value="50" min="1">
                     </div>
                     
                     <div class="form-group">
