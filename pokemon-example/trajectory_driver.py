@@ -136,16 +136,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         iframe {
             position: absolute;
-            width: 1200px; 
-            height: 1200px;
+            width: 100%;
+            height: 100%;
+            transform: scale(0.9);
+            transform-origin: center;
             border: none;
-            top: -400px;
-            left: 0px;
         }
 
         .controls-container {
             padding: 0.5rem;
             border-top: 1px solid #333;
+            max-height: 200px;
+            overflow-y: auto;
         }
 
         button {
@@ -450,9 +452,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             const actionText = step.action || 'Initial State';
             const locationText = step.location ? `at ${step.location}` : '';
 
+            // Add snapshot ID if available
+            const snapshotText = step.snapshot ? `[Snapshot: ${step.snapshot.substring(0, 8)}]` : '';
+            
             stepEl.innerHTML = `
                 <div class="step-info">
-                    <strong>Step ${index}:</strong> ${actionText} ${locationText}
+                    <strong>Step ${index}:</strong> ${actionText} ${locationText} ${snapshotText}
                 </div>
                 <div class="step-timestamp">${formatTime(step.timestamp)}</div>
             `;
@@ -474,7 +479,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         function addSnapshotToList(snapshot) {
             const item = document.createElement('div');
             item.className = 'snapshot-item';
-            item.textContent = `Step ${snapshot.step}: ${snapshot.id.substring(0, 8)}`;
+            // Include location if available 
+            const locationInfo = snapshot.location ? ` (${snapshot.location})` : '';
+            item.textContent = `Step ${snapshot.step}: ${snapshot.id.substring(0, 8)}${locationInfo}`;
 
             item.addEventListener('click', () => {
                 document.getElementById('snapshot-id').value = snapshot.id;
@@ -491,6 +498,33 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 console.log("Setting game iframe src to:", url);
                 gameIframe.src = url;
             }
+            // Adjust scale based on container size
+            updateIframeScale();
+        }
+        
+        // Dynamically adjust iframe scale based on container size
+        function updateIframeScale() {
+            const gameDisplay = document.querySelector('.game-display');
+            const gameIframe = document.getElementById('game-iframe');
+            if (!gameDisplay || !gameIframe) return;
+            
+            // Calculate optimal scale based on container dimensions
+            const containerWidth = gameDisplay.clientWidth;
+            const containerHeight = gameDisplay.clientHeight;
+            
+            // Calculate scale factor (adjust as needed for your specific game resolution)
+            // For Game Boy, a scale between 1.2-2.0 usually works well
+            const optimalScale = Math.min(
+                containerWidth / 160 * 0.2,  // Game Boy resolution is 160x144
+                containerHeight / 144 * 0.2
+            );
+            
+            // Apply the calculated scale, but keep it between 1.0 and 2.0
+            const verticalOffset = -containerHeight * 0;
+
+            const scale = Math.max(1.0, Math.min(2.0, optimalScale));
+            gameIframe.style.transform = `scale(${scale}) translateY(${verticalOffset}px)`;
+            console.log(`Adjusted iframe scale to: ${scale}`);
         }
 
         // Update UI based on status
@@ -756,9 +790,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             autoScroll = isScrolledToBottom;
         });
 
+        // Handle window resize to adjust iframe scale
+        window.addEventListener('resize', updateIframeScale);
+        
         // On page load, do initial tasks load + fetchData
         loadTasks();
         fetchData();
+        // Initial scale adjustment
+        updateIframeScale();
     </script>
 </body>
 </html>"""
