@@ -894,7 +894,10 @@ def main():
 
     # Start instance from snapshot
     console.print("Starting instance from snapshot...")
-    instance = morph_client.instances.start(args.snapshot_id)
+    instance = morph_client.instances.start(
+        snapshot_id=args.snapshot_id,
+        ttl_seconds=60 * 60 * 24, # 24 hours
+    )
 
     # Wait for instance to be ready
     console.print("Waiting for instance to be ready...")
