@@ -783,7 +783,7 @@ morph_client = None
 
 def extract_vnc_url(line):
     """Extract VNC URL from log line"""
-    match = re.search(r"Pokemon remote desktop available at: (https?://[^\s]+)", line)
+    match = re.search(r"(https://novnc-[^\s]*\.http\.cloud\.morph\.so[^\s]*)", line)
     if match:
         return match.group(1)
     return None
