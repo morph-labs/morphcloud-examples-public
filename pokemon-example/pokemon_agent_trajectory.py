@@ -267,14 +267,14 @@ class PokemonMCPHandler:
         log(LogLevel.INFO, f"Created MCP handler", extra={"server_url": server_url})
     
     async def connect(self):
-        """Connect to the MCP server."""
+        """Connect to the MCP server with retries and exponential backoff."""
         from mcp import ClientSession
         from mcp.client.sse import sse_client
         import asyncio
+        from contextlib import AsyncExitStack
         MAX_RETRIES = 10  # With exponential backoff, this gives us ~5 minutes total
         BASE_DELAY = 1  # Start with 1 second delay
         MAX_DELAY = 300  # Maximum delay of 5 minutes
-        from contextlib import AsyncExitStack
         
         self.exit_stack = AsyncExitStack()
         for attempt in range(MAX_RETRIES):
@@ -317,6 +317,44 @@ class PokemonMCPHandler:
         return False
 
         
+        for attempt in range(MAX_RETRIES):
+            try:
+                log(LogLevel.INFO, f"Connecting to MCP server (attempt {attempt + 1}/{MAX_RETRIES})", 
+                    extra={"url": self.server_url})
+                
+                # Connect to the SSE endpoint
+                self.streams = await self.exit_stack.enter_async_context(
+                    sse_client(self.server_url)
+                )
+                self.session = await self.exit_stack.enter_async_context(
+                    ClientSession(self.streams[0], self.streams[1])
+                )
+                
+                await self.session.initialize()
+                
+                # List available tools and store them
+                response = await self.session.list_tools()
+                self.tools = response.tools
+                tool_names = [tool.name for tool in self.tools]
+                log(LogLevel.INFO, f"Connected to server", 
+                    extra={"tool_count": len(tool_names), "tools": tool_names})
+                return True
+                
+            except Exception as e:
+                import traceback
+                log(LogLevel.ERROR, f"Connection attempt {attempt + 1} failed", 
+                    extra={"error": str(e), "traceback": traceback.format_exc()})
+                
+                if attempt < MAX_RETRIES - 1:
+                    # Calculate delay with exponential backoff
+                    delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
+                    log(LogLevel.INFO, f"Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
+                else:
+                    log(LogLevel.ERROR, "Max retries reached, giving up")
+                    return False
+        
+        return False
     
     def get_claude_tools(self):
         """Convert MCP tools to Claude-compatible format."""
@@ -349,7 +387,7 @@ class PokemonMCPHandler:
             raise ValueError("Not connected to MCP server")
         
         primary_result = await self.session.call_tool(tool_name, tool_input)
-        
+            
         # Parse the primary result manually to check if it already contains what we need
         has_state = False
         has_screenshot = False
@@ -562,7 +600,7 @@ class PokemonAgent(Agent[Dict[str, Any], str, bool, str]):
             "valid_moves": game_state.get("valid_moves", []),
             "last_action": state.get("last_action", "")
         }
-        
+
         
         # Make sure morph_instance reference is preserved
         if "_morph_instance" in state:
@@ -1464,4 +1502,3 @@ if __name__ == "__main__":
         api = PokemonAPI(host="127.0.0.1", port=args.port)
         print(f"Starting Pokemon Agent API on port {args.port}...")
         api.start()
-
