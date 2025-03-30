@@ -10,16 +10,17 @@
 # ///
 
 
-"""
-Run a non-interactive server agent that plays Pokemon automatically.
-This script combines the EmulatorClient, ServerAgent, and runner into a single file.
+"""Run a non-interactive server agent that plays Pokemon automatically.
+
+This script combines the EmulatorClient and PokemonAgent to set up a basic agent.
 """
 import io
 import sys
 import json
 import copy
-import logging
+import typing
 import base64
+import logging
 import argparse
 
 import requests
@@ -27,6 +28,7 @@ import requests
 from PIL import Image
 
 from anthropic import Anthropic
+
 from morphcloud.api import MorphCloudClient
 
 # Set up logging - this will be configured properly in main() based on command line args
@@ -40,7 +42,7 @@ USE_NAVIGATOR = True
 
 
 class EmulatorClient:
-    def __init__(self, host="127.0.0.1", port=9876):
+    def __init__(self, host: str = "127.0.0.1", port: int = 9876):
         # Check if host already includes the protocol, if not add http://
         if host.startswith("http://") or host.startswith("https://"):
             # For MorphVM URLs, don't append port as it's handled by the URL routing
@@ -235,11 +237,11 @@ def get_screenshot_base64(screenshot, upscale=1):
     return base64.standard_b64encode(buffered.getvalue()).decode()
 
 
-class ServerAgent:
+class PokemonAgent:
     def __init__(
         self,
         server_host="127.0.0.1",
-        server_port=9876,
+        server_port: typing.Optional[int] = 9876,
         max_history=60,
         display_config=None,
     ):
@@ -251,7 +253,7 @@ class ServerAgent:
             max_history: Maximum number of messages in history before summarization
             display_config: Dictionary with display configuration options
         """
-        self.client = EmulatorClient(host=server_host, port=server_port)
+        self.client = EmulatorClient(host=server_host, port=server_port or 9876)
         self.anthropic = Anthropic()
         self.running = True
         self.message_history = [
@@ -934,7 +936,7 @@ def main():
     # Run agent with the instance URL
     console.print("Initializing agent...")
     try:
-        agent = ServerAgent(
+        agent = PokemonAgent(
             server_host=instance_url,
             server_port=None,  # Not needed since URL already includes the port
             max_history=args.max_history,
