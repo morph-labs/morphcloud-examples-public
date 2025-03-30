@@ -31,7 +31,25 @@ This command will:
 3. Run the AI agent which will play Pokemon Red automatically
 4. Stop the instance when the agent finishes
 
-## Command Line Options
+### Using the Dashboard UI:
+```bash
+uv run dashboard.py
+```
+This will:
+1. Start a web interface on http://127.0.0.1:5001/
+2. Open the UI automatically in your default browser
+3. Allow you to input your snapshot ID and configure steps
+4. Show agent logs and display the game in a single interface
+5. Let you start and stop the agent at any time
+6. Support rolling back to previous snapshots within a run via the "Snapshots" tab
+
+To roll back to a previous snapshot:
+1. Click on the "Snapshots" tab
+2. Click "Load Snapshot" on the snapshot you want to restore
+3. Stop and then restart the agent to continue from that point
+
+The dashboard runs the agent with the `--no-browser` flag automatically to prevent opening duplicate browser windows.
+## Command Line Options for minimal_agent.py
 
 ### Required Arguments:
 - `--snapshot-id`: The MorphCloud snapshot ID to run
@@ -82,26 +100,6 @@ This will run the agent with maximum verbosity, showing all game state informati
 uv run minimal_agent.py --snapshot-id snap_abc123 --steps 20 --no-browser
 ```
 This will run the agent without automatically opening a browser window. The URL for accessing the game will still be printed in the console.
-
-### Using the Dashboard UI:
-```bash
-uv run dashboard.py
-```
-This will:
-1. Start a web interface on http://127.0.0.1:5001/
-2. Open the UI automatically in your default browser
-3. Allow you to input your snapshot ID and configure steps
-4. Show agent logs and display the game in a single interface
-5. Let you start and stop the agent at any time
-6. Support rolling back to previous snapshots within a run via the "Snapshots" tab
-
-To roll back to a previous snapshot:
-1. Click on the "Snapshots" tab
-2. Click "Load Snapshot" on the snapshot you want to restore
-3. Stop and then restart the agent to continue from that point
-
-The dashboard runs the agent with the `--no-browser` flag automatically to prevent opening duplicate browser windows.
-
 ## How to Extend
 
 This minimal agent is designed to be easily extended and customized. Here are several ways you can modify the agent to improve its capabilities:
