@@ -535,6 +535,65 @@ class MorphInstance:
         log(LogLevel.INFO, f"Waiting for instance {self.instance.id} to be ready...")
         log(LogLevel.SUCCESS, f"Instance {self.instance.id} is ready")
     
+    def create_snapshot(self) -> str:
+        """
+        Create a snapshot of the current instance state.
+        
+        Returns:
+            str: The ID of the created snapshot
+        """
+        if not self.instance:
+            raise ValueError("Instance is not running")
+        
+        log(LogLevel.INFO, f"Creating snapshot from instance {self.instance.id}")
+        
+        try:
+            # Create the snapshot without parameters
+            snapshot = self.instance.snapshot()
+            
+            snapshot_id = snapshot.id
+            log(LogLevel.SUCCESS, f"Created snapshot", 
+                extra={"snapshot_id": snapshot_id, "instance_id": self.instance.id})
+            
+            return snapshot_id
+        except Exception as e:
+            log(LogLevel.ERROR, f"Failed to create snapshot", 
+                extra={"error": str(e), "instance_id": self.instance.id})
+            import traceback
+            log(LogLevel.ERROR, f"Snapshot error traceback", 
+                extra={"traceback": traceback.format_exc()})
+            raise
+    
+    def set_snapshot_metadata(self, snapshot_id: str, metadata: Dict[str, str]) -> None:
+        """
+        Set metadata on a snapshot.
+        
+        Args:
+            snapshot_id: The ID of the snapshot to update
+            metadata: Metadata to set on the snapshot
+        """
+        if not metadata:
+            log(LogLevel.WARNING, f"No metadata provided for snapshot {snapshot_id}")
+            return
+            
+        log(LogLevel.INFO, f"Setting metadata on snapshot {snapshot_id}", 
+            extra={"metadata_keys": list(metadata.keys())})
+            
+        try:
+            # Get the snapshot and set the metadata
+            snapshot = morph_client.snapshots.get(snapshot_id)
+            snapshot.set_metadata(metadata)
+            snapshot._refresh()  # Refresh to get updated metadata
+            
+            log(LogLevel.SUCCESS, f"Set metadata on snapshot {snapshot_id}")
+        except Exception as e:
+            log(LogLevel.ERROR, f"Failed to set metadata on snapshot {snapshot_id}", 
+                extra={"error": str(e)})
+            import traceback
+            log(LogLevel.ERROR, f"Metadata error traceback", 
+                extra={"traceback": traceback.format_exc()})
+            raise
+    
     def exec(self, command: str) -> Dict[str, Any]:
         """Execute a command on the instance and return the result."""
         if not self.instance:
@@ -560,3 +619,4 @@ class MorphInstance:
     def __del__(self) -> None:
         """Ensure the instance is stopped when this object is garbage collected."""
         self.stop()
+
