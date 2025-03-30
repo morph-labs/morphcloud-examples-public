@@ -24,10 +24,12 @@ import logging
 import argparse
 
 import requests
+import webbrowser
 
 from PIL import Image
 
 from anthropic import Anthropic
+from rich.console import Console
 
 from morphcloud.api import MorphCloudClient
 
@@ -870,7 +872,6 @@ def main():
     logging.basicConfig(level=log_level, handlers=log_handlers, force=True)
 
     # Create a rich console for nice output
-    from rich.console import Console
 
     console = Console()
 
@@ -897,8 +898,7 @@ def main():
     # Start instance from snapshot
     console.print("Starting instance from snapshot...")
     instance = morph_client.instances.start(
-        snapshot_id=args.snapshot_id,
-        ttl_seconds=60 * 60 * 24, # 24 hours
+        snapshot_id=args.snapshot_id, ttl_seconds=60 * 60 * 24, # 24 hours
     )
 
     # Wait for instance to be ready
@@ -922,8 +922,6 @@ def main():
     console.print(f"Pokemon remote desktop available at: {novnc_url}")
 
     # Open the NoVNC URL automatically in the default browser
-    import webbrowser
-
     webbrowser.open(novnc_url)
 
     # Create a "game display" configuration object to pass to the agent
