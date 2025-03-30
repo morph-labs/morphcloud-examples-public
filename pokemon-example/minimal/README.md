@@ -93,6 +93,12 @@ This will:
 3. Allow you to input your snapshot ID and configure steps
 4. Show agent logs and display the game in a single interface
 5. Let you start and stop the agent at any time
+6. Support rolling back to previous snapshots within a run via the "Snapshots" tab
+
+To roll back to a previous snapshot:
+1. Click on the "Snapshots" tab
+2. Click "Load Snapshot" on the snapshot you want to restore
+3. Stop and then restart the agent to continue from that point
 
 The dashboard runs the agent with the `--no-browser` flag automatically to prevent opening duplicate browser windows.
 
