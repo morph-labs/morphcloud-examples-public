@@ -47,6 +47,10 @@ This repository contains ready-to-use scripts for creating preconfigured Morph C
 - Configures a development environment for working with Claude and MCP servers
 - Includes examples for Claude API integration and tools
 
+### swebench
+- Provides a platform to assess code fixes against software engineering tasks
+- Applies model-generated patches to codebases, runs test suites, and evaluates if the fixes successfully resolve the issues
+
 ## Prerequisites
 
 - A Morph Cloud [account](https://cloud.morph.so/docs/developers)
