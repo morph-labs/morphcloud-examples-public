@@ -34,7 +34,7 @@ uv run eval_swebench.py \
 | Argument | Type | Required | Default | Description | Example |
 |----------|------|----------|---------|-------------|---------|
 | `--dataset_name` | string | No | `princeton-nlp/SWE-bench_Lite` | Name of the SWE-bench dataset to use | `princeton-nlp/SWE-bench_Lite` |
-| `--predictions_path` | file path | Yes | - | Path to the JSON file containing predictions | `./predictions.json` |
+| `--predictions_path` | file path | Yes | - | Path to the JSON or JSONL file containing predictions | `./all_preds.jsonl` |
 | `--max_workers` | integer | No | `4` | Maximum number of parallel workers to use | `4` |
 | `--run_id` | string | Yes | - | Unique identifier for this evaluation run | `run_20230901` |
 | `--split` | string | No | `test` | Dataset split to evaluate on (dev/test) | `test` |
