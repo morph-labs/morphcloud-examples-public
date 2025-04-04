@@ -1,13 +1,17 @@
+#!/usr/bin/env python3
+
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
 #     "morphcloud",
 #     "swebench",
+#     "fire",
 # ]
 #
 # [tool.uv.sources]
 # swebench = { git = "https://github.com/SWE-bench/SWE-bench" }
 # ///
+
 """
 This script implements run_evaluation using Morph Cloud. It builds a snapshot
 via a chain of .setup() commands (including repository cloning and checkout
@@ -23,10 +27,8 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from contextlib import contextmanager
-from typing import cast
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import logging
-import multiprocessing
+from typing import Any, List, Optional, Dict, cast
 
 # Configure logging (adjust level and format as needed)
 logging.basicConfig(level=logging.ERROR, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -40,10 +42,14 @@ from swebench.harness.utils import (
 )
 from swebench.harness.grading import get_eval_report
 from swebench.harness.test_spec.test_spec import make_test_spec, TestSpec
-from swebench.harness.constants import RUN_EVALUATION_LOG_DIR, KEY_INSTANCE_ID, KEY_PREDICTION, LOG_REPORT, KEY_MODEL
+from swebench.harness.constants import (
+    RUN_EVALUATION_LOG_DIR, KEY_INSTANCE_ID, KEY_PREDICTION, LOG_REPORT, KEY_MODEL,
+    APPLY_PATCH_FAIL, APPLY_PATCH_PASS, START_TEST_OUTPUT, END_TEST_OUTPUT
+)
 from swebench.harness.docker_build import setup_logger
 from swebench.harness.utils import EvaluationError
-from swebench.harness.constants import APPLY_PATCH_FAIL, APPLY_PATCH_PASS, START_TEST_OUTPUT, END_TEST_OUTPUT
+
+import fire
 
 @dataclass
 class TestOutput:
@@ -54,7 +60,7 @@ class TestOutput:
     patch_diff: str
     log_dir: Path
     errored: bool
-    
+
 client = MorphCloudClient()
 
 @contextmanager
@@ -115,13 +121,13 @@ EOF
         finally:
             pass
 
-def get_log_dir(pred: dict, run_id: str, instance_id: str) -> Path:
+def get_log_dir(pred: Dict[str, Any], run_id: str, instance_id: str) -> Path:
     model_name_or_path = cast(
         str, pred.get("model_name_or_path", "None").replace("/", "__")
     )
     return RUN_EVALUATION_LOG_DIR / run_id / model_name_or_path / instance_id
 
-def process_instance_morph(test_spec, pred, run_id) -> TestOutput:
+def process_instance_morph(test_spec: TestSpec, pred: Dict[str, Any], run_id: str) -> TestOutput:
     """
     Do the remaining work (patch application, running eval, logging, reporting)
     on the Morph Cloud instance yielded by base_snapshot_context.
@@ -213,13 +219,9 @@ EOF
             # Get git diff after running eval script
             git_diff_resp = morphvm.exec(command="cd /testbed && git diff")
             git_diff_output_after = git_diff_resp.stdout
-
-            # Check if git diff changed after running eval script
             logger.info(f"Git diff after:\n{git_diff_output_after}")
             if git_diff_output_after != git_diff_output_before:
                 logger.info("Git diff changed after running eval script")
-            
-            # Write all log files immediately in this process
             
             # Write test output file
             test_output_path = log_dir / "test_output.txt"
@@ -341,62 +343,160 @@ EOF
             errored=True,
         )
 
-def process_instances_distributed(predictions, dataset, full_dataset, run_id, max_workers):
+def process_instances_distributed(
+    predictions: Dict[str, Any],
+    dataset: List[Dict[str, Any]],
+    full_dataset: List[Dict[str, Any]],
+    run_id: str,
+    max_workers: int,
+) -> None:
     """
-    Create a process pool to process the test specifications and run each instance on Morph Cloud.
+    Create a thread pool to process the test specifications and run each instance on Morph Cloud.
     """
-    run_test_specs = []
-    test_specs = list(map(make_test_spec, dataset))
+    run_test_specs: List[TestSpec] = []
+    test_specs: List[TestSpec] = list(map(make_test_spec, dataset))
     
     # Check for instances that have already been run
     for test_spec in test_specs:
-        log_dir = get_log_dir(
-            predictions[test_spec.instance_id], run_id, test_spec.instance_id
-        )
+        log_dir = get_log_dir(predictions[test_spec.instance_id], run_id, test_spec.instance_id)
         if log_dir.exists():
             continue
         run_test_specs.append(test_spec)
 
-    results = []
+    results: List[TestOutput] = []
     if run_test_specs:
-        # Run instances that haven't been run yet
-        with multiprocessing.Pool(processes=max_workers) as pool:
-            # Use starmap to run the function with multiple arguments
-            results = pool.starmap(
-                process_instance_morph,
-                [
-                    (
-                        test_spec,
-                        predictions[test_spec.instance_id],
-                        run_id,
-                    )
-                    for test_spec in run_test_specs
-                ],
-            )
-    
-    # No need to save logs here as it's already done in process_instance_morph
-    # Just print a summary
-    for result in results:
-        result = cast(TestOutput, result)
-        print(f"Instance {result.instance_id} completed (errored: {result.errored})")
+        # Run instances that haven't been run yet using a thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Use executor.submit to run the function with multiple arguments
+            futures = [
+                executor.submit(process_instance_morph, test_spec, predictions[test_spec.instance_id], run_id)
+                for test_spec in run_test_specs
+            ]
+            # As each future completes, process the result
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    results.append(result)
+                    print(f"Instance {result.instance_id} completed (errored: {result.errored})")
+                except Exception as e:
+                    # Handle exceptions from individual tasks
+                    print(f"Error processing an instance: {e}")
 
+    # No need to save logs here as it's already done in process_instance_morph
+    # Just print a summary and generate the run report
     make_run_report(predictions, full_dataset, run_id)
+
+
+def get_dataset_from_preds(
+    dataset_name: str,
+    split: str,
+    instance_ids: Optional[List[str]],
+    predictions: Dict[str, Any],
+    run_id: str,
+    rewrite_reports: bool,
+    exclude_completed: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    Return only instances that have predictions and are in the dataset.
+    If instance_ids is provided, only return instances with those IDs.
+    If exclude_completed is True, only return instances that have not been run yet.
+    """
+    # load dataset
+    dataset: List[Dict[str, Any]] = load_swebench_dataset(dataset_name, split)
+    dataset_ids = {i[KEY_INSTANCE_ID] for i in dataset}
+
+    if instance_ids:
+        # check that all instance IDs have predictions
+        missing_preds = set(instance_ids) - set(predictions.keys())
+        if missing_preds:
+            print(f"Warning: Missing predictions for {len(missing_preds)} instance IDs.")
+
+    # check that all prediction IDs are in the dataset
+    prediction_ids = set(predictions.keys())
+    if prediction_ids - dataset_ids:
+        raise ValueError(
+            "Some prediction IDs not found in dataset!\nMissing IDs:\n" +
+            " ".join(prediction_ids - dataset_ids)
+        )
+    if instance_ids:
+        dataset = [i for i in dataset if i[KEY_INSTANCE_ID] in instance_ids]
+
+    if rewrite_reports:
+        # we only return instances that have existing test outputs
+        test_output_ids = set()
+        for instance in dataset:
+            if instance[KEY_INSTANCE_ID] not in predictions:
+                continue
+            prediction = predictions[instance[KEY_INSTANCE_ID]]
+            test_output_file = (
+                RUN_EVALUATION_LOG_DIR
+                / run_id
+                / prediction.get("model_name_or_path", "None").replace("/", "__")
+                / prediction[KEY_INSTANCE_ID]
+                / "test_output.txt"
+            )
+            if test_output_file.exists():
+                test_output_ids.add(instance[KEY_INSTANCE_ID])
+        dataset = [
+            i for i in dataset
+            if i[KEY_INSTANCE_ID] in prediction_ids and i[KEY_INSTANCE_ID] in test_output_ids
+        ]
+        return dataset
+
+    # check which instance IDs have already been run
+    completed_ids = set()
+    for instance in dataset:
+        if instance[KEY_INSTANCE_ID] not in prediction_ids:
+            # skip instances without predictions
+            continue
+        prediction = predictions[instance[KEY_INSTANCE_ID]]
+        report_file = (
+            RUN_EVALUATION_LOG_DIR
+            / run_id
+            / prediction.get("model_name_or_path", "None").replace("/", "__")
+            / prediction[KEY_INSTANCE_ID]
+            / LOG_REPORT
+        )
+        if report_file.exists():
+            completed_ids.add(instance[KEY_INSTANCE_ID])
+
+    if completed_ids and exclude_completed:
+        # filter dataset to only instances that have not been run
+        print(f"{len(completed_ids)} instances already run, skipping...")
+        dataset = [i for i in dataset if i[KEY_INSTANCE_ID] not in completed_ids]
+
+    empty_patch_ids = {
+        k
+        for k, v in predictions.items()
+        if v[KEY_PREDICTION] == "" or v[KEY_PREDICTION] is None
+    }
+
+    # filter dataset to only instances with predictions
+    dataset = [
+        i
+        for i in dataset
+        if i[KEY_INSTANCE_ID] in prediction_ids
+        and i[KEY_INSTANCE_ID] not in empty_patch_ids
+    ]
+    return dataset
 
 def main(
     dataset_name: str,
     split: str,
-    instance_ids: list,
     predictions_path: str,
-    max_workers: int,
     run_id: str,
-    namespace: str | None,
-    rewrite_reports: bool,
+    max_workers: int = 4,
+    rewrite_reports: bool = False,
     report_dir: str = ".",
-):
+    instance_ids: Optional[List[str]] = None,
+    namespace: Optional[str] = None,
+) -> None:
     """
     Run evaluation harness for the given dataset and predictions.
     """
-    namespace = None if namespace == "" else namespace
+    # Normalize namespace parameter
+    if namespace == "":
+        namespace = None
 
     if dataset_name == "princeton-nlp/SWE-bench_Multimodal" and split == "test":
         print(
@@ -407,10 +507,9 @@ def main(
 
     # set open file limit
     assert len(run_id) > 0, "Run ID must be provided"
-    if report_dir is not None:
-        report_dir = Path(report_dir)
-        if not report_dir.exists():
-            report_dir.mkdir(parents=True)
+    report_dir = Path(report_dir)
+    if not report_dir.exists():
+        report_dir.mkdir(parents=True)
 
     # load predictions as map of instance_id to prediction
     predictions = get_predictions_from_file(predictions_path, dataset_name, split)
@@ -421,149 +520,7 @@ def main(
         dataset_name, split, instance_ids, predictions, run_id, rewrite_reports
     )
     full_dataset = load_swebench_dataset(dataset_name, split, instance_ids)
-    return process_instances_distributed(predictions, dataset, full_dataset, run_id, max_workers)
-
+    process_instances_distributed(predictions, dataset, full_dataset, run_id, max_workers)
 
 if __name__ == "__main__":
-    def get_dataset_from_preds(
-        dataset_name: str,
-        split: str,
-        instance_ids: list,
-        predictions: dict,
-        run_id: str,
-        rewrite_reports: bool,
-        exclude_completed: bool = True,
-    ):
-        """
-        Return only instances that have predictions and are in the dataset.
-        If instance_ids is provided, only return instances with those IDs.
-        If exclude_completed is True, only return instances that have not been run yet.
-        """
-        # load dataset
-        dataset = load_swebench_dataset(dataset_name, split)
-        dataset_ids = {i[KEY_INSTANCE_ID] for i in dataset}
-
-        if instance_ids:
-            # check that all instance IDs have predictions
-            missing_preds = set(instance_ids) - set(predictions.keys())
-            if missing_preds:
-                print(
-                    f"Warning: Missing predictions for {len(missing_preds)} instance IDs."
-                )
-
-        # check that all prediction IDs are in the dataset
-        prediction_ids = set(predictions.keys())
-        if prediction_ids - dataset_ids:
-            raise ValueError(
-                (
-                    "Some prediction IDs not found in dataset!"
-                    f"\nMissing IDs:\n{' '.join(prediction_ids - dataset_ids)}"
-                )
-            )
-        if instance_ids:
-            dataset = [i for i in dataset if i[KEY_INSTANCE_ID] in instance_ids]
-
-        if rewrite_reports:
-            # we only return instances that have existing test outputs
-            test_output_ids = set()
-            for instance in dataset:
-                if instance[KEY_INSTANCE_ID] not in predictions:
-                    continue
-                prediction = predictions[instance[KEY_INSTANCE_ID]]
-                test_output_file = (
-                    RUN_EVALUATION_LOG_DIR
-                    / run_id
-                    / prediction.get("model_name_or_path", "None").replace("/", "__")
-                    / prediction[KEY_INSTANCE_ID]
-                    / "test_output.txt"
-                )
-                if test_output_file.exists():
-                    test_output_ids.add(instance[KEY_INSTANCE_ID])
-            dataset = [
-                i for i in dataset
-                if i[KEY_INSTANCE_ID] in prediction_ids and i[KEY_INSTANCE_ID] in test_output_ids
-            ]
-            return dataset
-
-        # check which instance IDs have already been run
-        completed_ids = set()
-        for instance in dataset:
-            if instance[KEY_INSTANCE_ID] not in prediction_ids:
-                # skip instances without predictions
-                continue
-            prediction = predictions[instance[KEY_INSTANCE_ID]]
-            report_file = (
-                RUN_EVALUATION_LOG_DIR
-                / run_id
-                / prediction.get("model_name_or_path", "None").replace("/", "__")
-                / prediction[KEY_INSTANCE_ID]
-                / LOG_REPORT
-            )
-            if report_file.exists():
-                completed_ids.add(instance[KEY_INSTANCE_ID])
-
-        if completed_ids and exclude_completed:
-            # filter dataset to only instances that have not been run
-            print(f"{len(completed_ids)} instances already run, skipping...")
-            dataset = [i for i in dataset if i[KEY_INSTANCE_ID] not in completed_ids]
-
-        empty_patch_ids = {
-            k
-            for k, v in predictions.items()
-            if v[KEY_PREDICTION] == "" or v[KEY_PREDICTION] is None
-        }
-
-        # filter dataset to only instances with predictions
-        dataset = [
-            i
-            for i in dataset
-            if i[KEY_INSTANCE_ID] in prediction_ids
-            and i[KEY_INSTANCE_ID] not in empty_patch_ids
-        ]
-        return dataset
-
-    parser = ArgumentParser(
-        description="Run evaluation harness for the given dataset and predictions.",
-        formatter_class=ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--max_workers",
-        type=int,
-        default=4,
-        help="Maximum number of workers",
-    )
-    parser.add_argument(
-        "--dataset_name",
-        default="princeton-nlp/SWE-bench_Lite",
-        type=str,
-        help="Name of dataset or path to JSON file.",
-    )
-    parser.add_argument(
-        "--run_id", type=str, required=True, help="Run ID - identifies the run"
-    )
-    parser.add_argument(
-        "--rewrite_reports",
-        type=str2bool,
-        default=False,
-        help="Doesn't run new instances, only writes reports for instances with existing test outputs",
-    )
-    parser.add_argument(
-        "--report_dir", type=str, default="logs", help="Directory to write reports to"
-    )
-    parser.add_argument(
-        "--predictions_path",
-        type=str,
-        help="Path to predictions file - if 'gold', uses gold predictions",
-        required=True,
-    )
-    parser.add_argument(
-        "--instance_ids",
-        nargs="+",
-        type=str,
-        help="Instance IDs to run (space separated)",
-    )
-    parser.add_argument(
-        "--split", type=str, default="test", help="Split of the dataset"
-    )
-    args = parser.parse_args()
-    main(**vars(args))
+    fire.Fire(main)
