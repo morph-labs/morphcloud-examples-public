@@ -20,15 +20,16 @@ Just run this file and open your browser to http://localhost:5000.
 Dependencies: flask
 """
 import os
-import sys
-import time
+import re
 import signal
 import subprocess
+import sys
 import threading
-import re
-from collections import deque
+import time
 import webbrowser
-from flask import Flask, request, jsonify
+from collections import deque
+
+from flask import Flask, jsonify, request
 
 # Try to import MorphCloudClient for snapshot operations
 try:
@@ -781,12 +782,14 @@ vnc_url = None
 parent_snapshot_id = None
 morph_client = None
 
+
 def extract_vnc_url(line):
     """Extract VNC URL from log line"""
     match = re.search(r"(https://novnc-[^\s]*\.http\.cloud\.morph\.so[^\s]*)", line)
     if match:
         return match.group(1)
     return None
+
 
 def extract_snapshot_id(line):
     """Extract snapshot ID from log line"""
@@ -795,41 +798,45 @@ def extract_snapshot_id(line):
         return match.group(1)
     return None
 
+
 def log_reader(process):
     """Read logs from the process stdout/stderr in real-time"""
     global agent_logs, agent_running, vnc_url
-    
-    for line in iter(process.stdout.readline, b''):
+
+    for line in iter(process.stdout.readline, b""):
         try:
-            decoded_line = line.decode('utf-8').rstrip()
-            
+            decoded_line = line.decode("utf-8").rstrip()
+
             # Check if this line contains the VNC URL
             extracted_url = extract_vnc_url(decoded_line)
             if extracted_url:
                 print(f"Found VNC URL: {extracted_url}")
                 vnc_url = extracted_url
-            
+
             # Add timestamp to the log line
             timestamp = time.strftime("%H:%M:%S", time.localtime())
             log_line = f"[{timestamp}] {decoded_line}"
-            
+
             # Add to log buffer with thread safety
             with log_lock:
                 agent_logs.append(log_line)
-                
+
             print(log_line)
         except Exception as e:
             print(f"Error processing log line: {e}")
-    
+
     # Process has ended
     with log_lock:
-        agent_logs.append(f"[{time.strftime('%H:%M:%S', time.localtime())}] Agent process terminated")
+        agent_logs.append(
+            f"[{time.strftime('%H:%M:%S', time.localtime())}] Agent process terminated"
+        )
         agent_running = False
+
 
 def initialize_morph_client():
     """Initialize MorphCloud client if possible"""
     global morph_client
-    
+
     if MorphCloudClient is not None:
         try:
             morph_client = MorphCloudClient()
@@ -837,25 +844,27 @@ def initialize_morph_client():
             return True
         except Exception as e:
             print(f"Error initializing MorphCloud client: {e}")
-    
+
     return False
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """Serve the main page"""
     return HTML_TEMPLATE
 
-@app.route('/logs')
+
+@app.route("/logs")
 def get_logs():
     """Get new log entries since the given position"""
     global agent_logs, vnc_url
-    
-    position = int(request.args.get('position', 0))
-    
+
+    position = int(request.args.get("position", 0))
+
     with log_lock:
         # Convert deque to list for easier slicing
         all_logs = list(agent_logs)
-        
+
         # Get logs from the requested position
         if position < len(all_logs):
             new_logs = all_logs[position:]
@@ -863,155 +872,173 @@ def get_logs():
         else:
             new_logs = []
             next_position = position
-    
-    return jsonify({
-        "logs": new_logs,
-        "nextPosition": next_position,
-        "agentRunning": agent_running,
-        "vncUrl": vnc_url
-    })
 
-@app.route('/snapshots')
+    return jsonify(
+        {
+            "logs": new_logs,
+            "nextPosition": next_position,
+            "agentRunning": agent_running,
+            "vncUrl": vnc_url,
+        }
+    )
+
+
+@app.route("/snapshots")
 def get_snapshots():
     """Get snapshots for the current session"""
     global morph_client, parent_snapshot_id
-    
+
     if morph_client is None:
         return jsonify({"snapshots": [], "error": "MorphCloud client not available"})
-    
+
     if parent_snapshot_id is None:
-        return jsonify({"snapshots": [], "message": "No parent snapshot set for this session"})
-    
+        return jsonify(
+            {"snapshots": [], "message": "No parent snapshot set for this session"}
+        )
+
     try:
         # Get snapshots that have our dashboard run ID in metadata
         # Extract the original snapshot ID if we're using it for tracking
-        snapshots = morph_client.snapshots.list(metadata={"dashboard_run_id": parent_snapshot_id})
-        
-        
+        snapshots = morph_client.snapshots.list(
+            metadata={"dashboard_run_id": parent_snapshot_id}
+        )
+
         # Convert to dictionaries for JSON serialization
         snapshot_dicts = []
         for snapshot in snapshots:
             snapshot_dict = {
                 "id": snapshot.id,
-                "name": getattr(snapshot, 'name', None),
-                "created": getattr(snapshot, 'created', 0),
-                "metadata": getattr(snapshot, 'metadata', {})
+                "name": getattr(snapshot, "name", None),
+                "created": getattr(snapshot, "created", 0),
+                "metadata": getattr(snapshot, "metadata", {}),
             }
             snapshot_dicts.append(snapshot_dict)
-        
+
         return jsonify({"snapshots": snapshot_dicts})
     except Exception as e:
         print(f"Error fetching snapshots: {e}")
         return jsonify({"snapshots": [], "error": str(e)})
 
-@app.route('/start', methods=['POST'])
+
+@app.route("/start", methods=["POST"])
 def start_agent():
     """Start the Pokemon agent"""
     global agent_process, agent_running, agent_logs, vnc_url, parent_snapshot_id
-    
+
     # Check if agent is already running
     if agent_running:
         return jsonify({"success": False, "error": "Agent is already running"})
-    
+
     try:
         data = request.json
-        snapshot_id = data.get('snapshotId')
-        steps = data.get('steps', 10)
-        
+        snapshot_id = data.get("snapshotId")
+        steps = data.get("steps", 10)
+
         # Always create a new run ID for each agent start
         # This ensures previous snapshots don't appear in the current run's view
         run_timestamp = int(time.time())
         parent_snapshot_id = f"{snapshot_id}_{run_timestamp}"
         print(f"Setting new run ID for this session: {parent_snapshot_id}")
-        
+
         # Clear previous logs
         with log_lock:
             agent_logs.clear()
             vnc_url = None
-        
+
         # Check if the agent script exists
         if not os.path.exists("minimal_agent.py"):
-            return jsonify({
-                "success": False, 
-                "error": "minimal_agent.py not found. Please ensure the agent file is in the current directory."
-            })
-        
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "minimal_agent.py not found. Please ensure the agent file is in the current directory.",
+                }
+            )
+
         # Extract the original snapshot ID if we're using a combined run ID
         actual_snapshot_id = snapshot_id
         actual_parent_id = parent_snapshot_id
-        
+
         # If parent_snapshot_id contains a timestamp, extract the actual snapshot ID
-        if '_' in parent_snapshot_id:
-            parts = parent_snapshot_id.split('_')
+        if "_" in parent_snapshot_id:
+            parts = parent_snapshot_id.split("_")
             if len(parts) >= 2:  # Ensure it has the expected format
                 actual_parent_id = parts[0]  # First part is the actual snapshot ID
-                
+
         # Build command
         cmd = [
-            sys.executable, 
+            sys.executable,
             "minimal_agent.py",
-            "--snapshot-id", actual_snapshot_id,
-            "--steps", str(steps),
+            "--snapshot-id",
+            actual_snapshot_id,
+            "--steps",
+            str(steps),
             "--no-browser",  # Suppress browser auto-open since we're using the dashboard
-            "--parent-snapshot-id", actual_parent_id,  # The actual snapshot for lineage
-            "--dashboard-run-id", parent_snapshot_id,  # The combined run ID for filtering
-            "--snapshot-prefix", f"dash_{int(time.time())}"
+            "--parent-snapshot-id",
+            actual_parent_id,  # The actual snapshot for lineage
+            "--dashboard-run-id",
+            parent_snapshot_id,  # The combined run ID for filtering
+            "--snapshot-prefix",
+            f"dash_{int(time.time())}",
         ]
-        
+
         # Start the process with pipes for stdout/stderr
         print(f"Starting agent with command: {' '.join(cmd)}")
-        
+
         agent_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
-            universal_newlines=False
+            universal_newlines=False,
         )
-        
+
         agent_running = True
-        
+
         # Start a thread to read the logs
         log_thread = threading.Thread(target=log_reader, args=(agent_process,))
         log_thread.daemon = True
         log_thread.start()
-        
+
         # Add initial log entry
         with log_lock:
             timestamp = time.strftime("%H:%M:%S", time.localtime())
-            agent_logs.append(f"[{timestamp}] Started agent with snapshot {snapshot_id} for {steps} steps")
-            agent_logs.append(f"[{timestamp}] Using parent snapshot {parent_snapshot_id} for lineage tracking")
-            agent_logs.append(f"[{timestamp}] All snapshots will be tagged with dashboard_run_id={parent_snapshot_id}")
-        
-        return jsonify({
-            "success": True,
-            "message": "Agent started"
-        })
-        
+            agent_logs.append(
+                f"[{timestamp}] Started agent with snapshot {snapshot_id} for {steps} steps"
+            )
+            agent_logs.append(
+                f"[{timestamp}] Using parent snapshot {parent_snapshot_id} for lineage tracking"
+            )
+            agent_logs.append(
+                f"[{timestamp}] All snapshots will be tagged with dashboard_run_id={parent_snapshot_id}"
+            )
+
+        return jsonify({"success": True, "message": "Agent started"})
+
     except Exception as e:
         print(f"Error starting agent: {e}")
         agent_running = False
         return jsonify({"success": False, "error": str(e)})
 
-@app.route('/stop', methods=['POST'])
+
+@app.route("/stop", methods=["POST"])
 def stop_agent():
     global agent_process, agent_running
-    
+
     # Wrap everything in try/except to prevent server crashes
     try:
         if not agent_running or agent_process is None:
             return jsonify({"success": False, "error": "No agent is running"})
-        
+
         # Log that we're attempting to stop
         print(f"Attempting to stop agent process (PID: {agent_process.pid})")
-        
+
         # Create a local reference to the process
         process_to_stop = agent_process
-        
+
         # Clear global references first to avoid deadlocks
         agent_running = False
         agent_process = None
-        
+
         # Then terminate the process
         try:
             process_to_stop.terminate()
@@ -1022,27 +1049,25 @@ def stop_agent():
                 process_to_stop.kill()
             except:
                 pass  # Already dead or can't be killed
-        
+
         # Add log entry
         with log_lock:
             timestamp = time.strftime("%H:%M:%S", time.localtime())
             agent_logs.append(f"[{timestamp}] Agent stopped")
-        
-        return jsonify({
-            "success": True,
-            "message": "Agent stopped"
-        })
-        
+
+        return jsonify({"success": True, "message": "Agent stopped"})
+
     except Exception as e:
         # Critical error handling - log it but don't crash
         print(f"CRITICAL ERROR in stop_agent: {e}")
         import traceback
+
         traceback.print_exc()
-        
+
         # Reset state to be safe
         agent_running = False
         agent_process = None
-        
+
         # Always return a response
         return jsonify({"success": False, "error": f"Server error: {str(e)}"})
 
@@ -1054,15 +1079,16 @@ def main():
     print("1. Make sure your minimal_agent.py file is in the current directory")
     print("2. Opening browser to http://127.0.0.1:5001/")
     print("3. Press Ctrl+C to stop the server")
-    
+
     # Initialize MorphCloud client
     initialize_morph_client()
-    
+
     # Open browser automatically
     webbrowser.open("http://127.0.0.1:5001/")
-    
-    # Run the Flask app
-    app.run(host='0.0.0.0', port=5001, threaded=True)
 
-if __name__ == '__main__':
+    # Run the Flask app
+    app.run(host="0.0.0.0", port=5001, threaded=True)
+
+
+if __name__ == "__main__":
     main()

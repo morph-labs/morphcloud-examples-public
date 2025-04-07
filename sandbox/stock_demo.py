@@ -2,38 +2,42 @@
 # Script to set up MorphSandbox with Tesla stock data and run parallel agents
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
-import json
 import webbrowser
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+from agents import Agent, RunContextWrapper, Runner, function_tool
 from morph_sandbox import MorphSandbox
-from agents import Agent, function_tool, RunContextWrapper, Runner
 
 #######################
 # Setup Functions
 #######################
 
+
 def open_url_in_browser(url, delay=0):
     """Open a URL in the browser with an optional delay.
-    
+
     Args:
         url: URL to open
         delay: Delay in seconds before opening
     """
     if delay:
         import time
+
         time.sleep(delay)
     print(f"Opening in browser: {url}")
     webbrowser.open(url)
 
+
 async def setup_initial_sandbox(snapshot_id=None):
     """Set up the initial sandbox with Tesla stock data and a simple Streamlit app.
-    
+
     Args:
         snapshot_id: Optional ID of a snapshot to restore from
-    
+
     Returns:
         Dict with sandbox info and snapshot ID
     """
@@ -46,15 +50,15 @@ async def setup_initial_sandbox(snapshot_id=None):
         print("Creating new MorphSandbox...")
         sandbox = await MorphSandbox.create()
         is_from_snapshot = False
-    
+
     try:
         print(f"Sandbox created! JupyterLab URL: {sandbox.jupyter_url}")
         open_url_in_browser(sandbox.jupyter_url)
-        
+
         # Make sure the sandbox is ready
         print("Waiting for sandbox to be fully ready...")
         await sandbox.instance.await_until_ready()
-        
+
         # Install only packages that might not be in the base sandbox
         if not is_from_snapshot:
             print("\nInstalling additional packages...")
@@ -64,19 +68,21 @@ async def setup_initial_sandbox(snapshot_id=None):
             )
         else:
             print("\nSkipping package installation (using snapshot)")
-        
+
         # Check if the dataset exists already (for snapshots)
-        check_dataset = await sandbox.execute_command("ls -la /root/notebooks/data/tesla_stock.csv 2>/dev/null || echo 'not_found'")
+        check_dataset = await sandbox.execute_command(
+            "ls -la /root/notebooks/data/tesla_stock.csv 2>/dev/null || echo 'not_found'"
+        )
         has_dataset = "not_found" not in check_dataset["stdout"]
-        
+
         # Create data directory if it doesn't exist
         await sandbox.execute_command("mkdir -p /root/notebooks/data")
-        
+
         # Download and process dataset (only if needed)
         if not is_from_snapshot and not has_dataset:
             print("\nCreating notebook...")
             notebook = await sandbox.create_notebook("tesla_stock.ipynb")
-            
+
             # Add cell to download the dataset
             print("Adding cell to download Tesla stock data...")
             download_cell = """
@@ -116,8 +122,10 @@ with open('/root/notebooks/data/tesla_stock.pkl', 'wb') as f:
     pickle.dump(tesla_data, f)
 print("Saved combined dataset to tesla_stock.pkl")
 """
-            download_cell_result = await sandbox.add_cell("tesla_stock.ipynb", download_cell)
-            
+            download_cell_result = await sandbox.add_cell(
+                "tesla_stock.ipynb", download_cell
+            )
+
             # Add cell to load and explore the dataset
             print("Adding cell to load and explore dataset...")
             explore_cell = """
@@ -151,21 +159,27 @@ plt.show()
 
 print("Data exploration complete!")
 """
-            explore_cell_result = await sandbox.add_cell("tesla_stock.ipynb", explore_cell)
-            
+            explore_cell_result = await sandbox.add_cell(
+                "tesla_stock.ipynb", explore_cell
+            )
+
             # Execute notebook cells
             print("\nDownloading and exploring Tesla stock data...")
             try:
                 # Execute dataset download cell
-                await sandbox.execute_cell("tesla_stock.ipynb", download_cell_result["index"])
+                await sandbox.execute_cell(
+                    "tesla_stock.ipynb", download_cell_result["index"]
+                )
                 print("Tesla stock data downloaded successfully!")
-                
+
                 # Execute exploration cell
-                await sandbox.execute_cell("tesla_stock.ipynb", explore_cell_result["index"])
+                await sandbox.execute_cell(
+                    "tesla_stock.ipynb", explore_cell_result["index"]
+                )
                 print("Data exploration completed!")
             except Exception as e:
                 print(f"Error executing notebook cells: {str(e)}")
-        
+
         # Create simplified Streamlit app
         print("\nCreating simplified Streamlit app...")
         streamlit_app = """import streamlit as st
@@ -251,19 +265,21 @@ with col3:
 # Show raw data if requested
 if st.checkbox("Show Raw Data"):
     st.dataframe(hourly_data)"""
-                   
+
         # Create Streamlit directory
         await sandbox.execute_command("mkdir -p /root/notebooks/streamlit")
-        
+
         # Use a temporary file approach to avoid escaping issues
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False
+        ) as temp_file:
             temp_file.write(streamlit_app)
             temp_file_path = temp_file.name
-        
+
         # Upload the file to the sandbox
         await sandbox.upload_file(temp_file_path, "/root/notebooks/streamlit/app.py")
         os.remove(temp_file_path)
-        
+
         # Create script to run Streamlit app
         run_script = """#!/bin/bash
 source /root/venv/bin/activate
@@ -271,21 +287,25 @@ cd /root/notebooks/streamlit
 streamlit run app.py --server.port=8501 --server.address=0.0.0.0
 """
         # Create and upload run script
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as temp_script:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sh", delete=False
+        ) as temp_script:
             temp_script.write(run_script)
             temp_script_path = temp_script.name
-            
-        await sandbox.upload_file(temp_script_path, "/root/notebooks/streamlit/run_app.sh")
+
+        await sandbox.upload_file(
+            temp_script_path, "/root/notebooks/streamlit/run_app.sh"
+        )
         os.remove(temp_script_path)
-        
+
         await sandbox.execute_command("chmod +x /root/notebooks/streamlit/run_app.sh")
-        
+
         # Install tmux if not available
         tmux_check = await sandbox.execute_command("which tmux || echo 'not_found'")
         if "not_found" in tmux_check["stdout"]:
             print("\nInstalling tmux...")
             await sandbox.execute_command("apt-get update && apt-get install -y tmux")
-        
+
         # Start Streamlit in tmux
         print("\nStarting Streamlit app in tmux...")
         tmux_script = """
@@ -299,30 +319,36 @@ tmux new-session -d -s streamlit
 tmux send-keys -t streamlit 'cd /root/notebooks/streamlit && source /root/venv/bin/activate && ./run_app.sh' C-m
 """
         # Create and upload tmux script
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as temp_tmux:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sh", delete=False
+        ) as temp_tmux:
             temp_tmux.write(tmux_script)
             temp_tmux_path = temp_tmux.name
-            
+
         await sandbox.upload_file(temp_tmux_path, "/root/start_tmux.sh")
         os.remove(temp_tmux_path)
-        
-        await sandbox.execute_command("chmod +x /root/start_tmux.sh && /root/start_tmux.sh")
-        
+
+        await sandbox.execute_command(
+            "chmod +x /root/start_tmux.sh && /root/start_tmux.sh"
+        )
+
         # Verify Streamlit is running
         print("\nVerifying Streamlit is running...")
-        streamlit_check = await sandbox.execute_command("ps aux | grep streamlit | grep -v grep")
+        streamlit_check = await sandbox.execute_command(
+            "ps aux | grep streamlit | grep -v grep"
+        )
         if streamlit_check["stdout"].strip():
             print("✅ Streamlit is running")
         else:
             print("❌ Streamlit not detected, attempting to start again...")
             await sandbox.execute_command("/root/start_tmux.sh")
             await asyncio.sleep(2)  # Give it a moment to start
-        
+
         # Expose the Streamlit app
         print("\nExposing Streamlit app via HTTP...")
         streamlit_url = await sandbox.instance.aexpose_http_service("streamlit", 8501)
         print(f"Streamlit app URL: {streamlit_url}")
-        
+
         # Now create the snapshot AFTER everything is set up and running
         if not is_from_snapshot:
             print("\nCreating snapshot of the environment...")
@@ -331,35 +357,39 @@ tmux send-keys -t streamlit 'cd /root/notebooks/streamlit && source /root/venv/b
         else:
             print("\nUsing existing environment from snapshot")
             snapshot_id = snapshot_id or sandbox.instance.id
-        
+
         print("\n====== Initial Setup Complete ======")
         print(f"JupyterLab URL: {sandbox.jupyter_url}")
         print(f"Streamlit app URL: {streamlit_url}")
         print(f"Snapshot ID: {snapshot_id}")
-        
+
         # Automatically open URLs in browser
         open_url_in_browser(streamlit_url, delay=1)
-        
+
         return {
             "sandbox": sandbox,
             "jupyter_url": sandbox.jupyter_url,
             "streamlit_url": streamlit_url,
-            "snapshot_id": snapshot_id
+            "snapshot_id": snapshot_id,
         }
-    
+
     except Exception as e:
         print(f"Error during setup: {str(e)}")
         await sandbox.stop()
         raise
 
+
 #######################
 # Sandbox Tools for Agents
 #######################
 
+
 @function_tool
-async def create_notebook(ctx: RunContextWrapper[MorphSandbox], name: str) -> Dict[str, Any]:
+async def create_notebook(
+    ctx: RunContextWrapper[MorphSandbox], name: str
+) -> Dict[str, Any]:
     """Create a new notebook in the sandbox.
-    
+
     Args:
         name: Name of the notebook to create
     """
@@ -367,14 +397,13 @@ async def create_notebook(ctx: RunContextWrapper[MorphSandbox], name: str) -> Di
     result = await sandbox.create_notebook(name)
     return result
 
+
 @function_tool
 async def add_code_cell(
-    ctx: RunContextWrapper[MorphSandbox], 
-    notebook_path: str, 
-    cell_content: str
+    ctx: RunContextWrapper[MorphSandbox], notebook_path: str, cell_content: str
 ) -> Dict[str, Any]:
     """Add a code cell to a notebook.
-    
+
     Args:
         notebook_path: Path to the notebook
         cell_content: Content of the cell
@@ -383,14 +412,13 @@ async def add_code_cell(
     result = await sandbox.add_cell(notebook_path, cell_content, "code")
     return result
 
+
 @function_tool
 async def add_markdown_cell(
-    ctx: RunContextWrapper[MorphSandbox], 
-    notebook_path: str, 
-    cell_content: str
+    ctx: RunContextWrapper[MorphSandbox], notebook_path: str, cell_content: str
 ) -> Dict[str, Any]:
     """Add a markdown cell to a notebook.
-    
+
     Args:
         notebook_path: Path to the notebook
         cell_content: Content of the cell
@@ -399,14 +427,13 @@ async def add_markdown_cell(
     result = await sandbox.add_cell(notebook_path, cell_content, "markdown")
     return result
 
+
 @function_tool
 async def execute_cell(
-    ctx: RunContextWrapper[MorphSandbox], 
-    notebook_path: str, 
-    cell_index: int
+    ctx: RunContextWrapper[MorphSandbox], notebook_path: str, cell_index: int
 ) -> Dict[str, Any]:
     """Execute a specific cell in a notebook.
-    
+
     Args:
         notebook_path: Path to the notebook
         cell_index: Index of the cell to execute
@@ -415,13 +442,13 @@ async def execute_cell(
     result = await sandbox.execute_cell(notebook_path, cell_index)
     return result
 
+
 @function_tool
 async def execute_code(
-    ctx: RunContextWrapper[MorphSandbox], 
-    code: str
+    ctx: RunContextWrapper[MorphSandbox], code: str
 ) -> Dict[str, Any]:
     """Execute Python code directly in the sandbox.
-    
+
     Args:
         code: Python code to execute
     """
@@ -429,13 +456,13 @@ async def execute_code(
     result = await sandbox.execute_code(code)
     return result
 
+
 @function_tool
 async def execute_command(
-    ctx: RunContextWrapper[MorphSandbox], 
-    command: str
+    ctx: RunContextWrapper[MorphSandbox], command: str
 ) -> Dict[str, str]:
     """Execute a shell command in the sandbox.
-    
+
     Args:
         command: Shell command to execute
     """
@@ -443,100 +470,102 @@ async def execute_command(
     result = await sandbox.execute_command(command)
     return result
 
+
 @function_tool
 async def update_streamlit_app(
-    ctx: RunContextWrapper[MorphSandbox], 
-    content: str,
-    file_path: str
+    ctx: RunContextWrapper[MorphSandbox], content: str, file_path: str
 ) -> Dict[str, str]:
     """Create or update a Streamlit application file and test for errors.
-    
+
     Args:
         content: The complete content to write to the Streamlit app file
         file_path: The file path to write to (e.g. "/root/notebooks/streamlit/app.py")
     """
     sandbox = ctx.context
-    
+
     # If file_path is not provided, use a default path
     target_path = file_path or "/root/notebooks/streamlit/app.py"
-    
+
     # Create a temporary test file path
     test_path = f"{os.path.dirname(target_path)}/test_app.py"
-    
+
     # Create temporary file with the content
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as temp_file:
         temp_file.write(content)
         temp_file_path = temp_file.name
-    
+
     # Ensure the streamlit directory exists
     if "/" in target_path:
         dir_path = os.path.dirname(target_path)
         await sandbox.execute_command(f"mkdir -p {dir_path}")
-    
+
     # Upload to the test file first
     await sandbox.upload_file(temp_file_path, test_path)
     os.remove(temp_file_path)
-    
+
     # Create simple error log file
     error_file = "/tmp/streamlit_errors.log"
     await sandbox.execute_command(f"rm -f {error_file}")
-    
+
     # Kill any existing test session
-    await sandbox.execute_command("tmux kill-session -t streamlit_test 2>/dev/null || true")
-    
+    await sandbox.execute_command(
+        "tmux kill-session -t streamlit_test 2>/dev/null || true"
+    )
+
     # Create a new tmux session and run Streamlit test on port 8502
     test_command = f"cd $(dirname {test_path}) && source /root/venv/bin/activate && streamlit run {test_path} --server.port=8502 --server.headless=true 2> {error_file}"
-    await sandbox.execute_command(f"tmux new-session -d -s streamlit_test '{test_command}'")
-    
+    await sandbox.execute_command(
+        f"tmux new-session -d -s streamlit_test '{test_command}'"
+    )
+
     # Wait briefly for any immediate errors
     await asyncio.sleep(3)
-    
+
     # Kill the test session
-    await sandbox.execute_command("tmux kill-session -t streamlit_test 2>/dev/null || true")
-    
+    await sandbox.execute_command(
+        "tmux kill-session -t streamlit_test 2>/dev/null || true"
+    )
+
     # Check for errors
     error_output = await sandbox.execute_command(f"cat {error_file}")
     errors = error_output["stdout"]
-    
+
     if errors.strip():
         # Clean up test file
         await sandbox.execute_command(f"rm -f {test_path}")
-        
+
         return {
             "status": "error",
             "message": "Errors detected in Streamlit app - main app not updated",
-            "error_details": errors
+            "error_details": errors,
         }
     else:
         # No errors, update the main app file
         await sandbox.execute_command(f"cp {test_path} {target_path}")
-        
+
         # Clean up test file
         await sandbox.execute_command(f"rm -f {test_path}")
-        
+
         # Restart the main Streamlit process
         await sandbox.execute_command("/root/start_tmux.sh")
-        
+
         return {
             "status": "success",
-            "message": f"Successfully updated Streamlit app at {target_path}"
+            "message": f"Successfully updated Streamlit app at {target_path}",
         }
 
 
-
 @function_tool
-async def create_snapshot(
-    ctx: RunContextWrapper[MorphSandbox], 
-    digest: str
-) -> str:
+async def create_snapshot(ctx: RunContextWrapper[MorphSandbox], digest: str) -> str:
     """Create a snapshot of the current sandbox state.
-    
+
     Args:
         digest: Name for the snapshot
     """
     sandbox = ctx.context
     snapshot_id = await sandbox.snapshot(digest)
     return snapshot_id
+
 
 #######################
 # Agent Definitions
@@ -647,83 +676,108 @@ intraday_agent = Agent(
     name="Intraday Analysis Agent",
     instructions=INTRADAY_AGENT_INSTRUCTIONS,
     tools=[
-        create_notebook, add_code_cell, add_markdown_cell, execute_cell, 
-        execute_code, execute_command, update_streamlit_app, create_snapshot
-    ]
+        create_notebook,
+        add_code_cell,
+        add_markdown_cell,
+        execute_cell,
+        execute_code,
+        execute_command,
+        update_streamlit_app,
+        create_snapshot,
+    ],
 )
 
 long_term_agent = Agent(
     name="Long-term Analysis Agent",
     instructions=LONG_TERM_AGENT_INSTRUCTIONS,
     tools=[
-        create_notebook, add_code_cell, add_markdown_cell, execute_cell, 
-        execute_code, execute_command, update_streamlit_app, create_snapshot
-    ]
+        create_notebook,
+        add_code_cell,
+        add_markdown_cell,
+        execute_cell,
+        execute_code,
+        execute_command,
+        update_streamlit_app,
+        create_snapshot,
+    ],
 )
 
 #######################
 # Parallel Agent Runner
 #######################
 
+
 async def run_parallel_analysis(snapshot_id: str):
     """Run parallel stock analysis with two specialized agents.
-    
+
     Args:
         snapshot_id: ID of the prepared environment snapshot
     """
     # Create two sandboxes from the same snapshot
     print("\nCreating sandboxes for parallel analysis...")
-    
+
     # First sandbox for intraday analysis
     print("Creating sandbox for intraday analysis...")
     intraday_sandbox = await MorphSandbox.create(snapshot_id=snapshot_id)
     intraday_jupyter_url = intraday_sandbox.jupyter_url
     print(f"Intraday analysis sandbox ready at: {intraday_jupyter_url}")
-    
+
     # Second sandbox for long-term analysis
     print("Creating sandbox for long-term analysis...")
     long_term_sandbox = await MorphSandbox.create(snapshot_id=snapshot_id)
     long_term_jupyter_url = long_term_sandbox.jupyter_url
     print(f"Long-term analysis sandbox ready at: {long_term_jupyter_url}")
-    
+
     try:
         # Verify Streamlit is running in each sandbox
         print("\nVerifying Streamlit services...")
-        
+
         # For intraday sandbox
-        streamlit_check = await intraday_sandbox.execute_command("ps aux | grep streamlit | grep -v grep")
+        streamlit_check = await intraday_sandbox.execute_command(
+            "ps aux | grep streamlit | grep -v grep"
+        )
         if streamlit_check["stdout"].strip():
             print("✅ Streamlit is running in intraday analysis sandbox")
         else:
-            print("❌ Streamlit not detected in intraday analysis sandbox, attempting to start...")
+            print(
+                "❌ Streamlit not detected in intraday analysis sandbox, attempting to start..."
+            )
             await intraday_sandbox.execute_command("/root/start_tmux.sh")
-            
+
         # For long-term sandbox
-        streamlit_check = await long_term_sandbox.execute_command("ps aux | grep streamlit | grep -v grep")
+        streamlit_check = await long_term_sandbox.execute_command(
+            "ps aux | grep streamlit | grep -v grep"
+        )
         if streamlit_check["stdout"].strip():
             print("✅ Streamlit is running in long-term analysis sandbox")
         else:
-            print("❌ Streamlit not detected in long-term analysis sandbox, attempting to start...")
+            print(
+                "❌ Streamlit not detected in long-term analysis sandbox, attempting to start..."
+            )
             await long_term_sandbox.execute_command("/root/start_tmux.sh")
-        
+
         # Get Streamlit URLs for both sandboxes
         print("\nGetting Streamlit URLs...")
-        intraday_streamlit_url = await intraday_sandbox.instance.aexpose_http_service("streamlit", 8501)
-        long_term_streamlit_url = await long_term_sandbox.instance.aexpose_http_service("streamlit", 8501)
-        
+        intraday_streamlit_url = await intraday_sandbox.instance.aexpose_http_service(
+            "streamlit", 8501
+        )
+        long_term_streamlit_url = await long_term_sandbox.instance.aexpose_http_service(
+            "streamlit", 8501
+        )
+
         print(f"Intraday Analysis Streamlit URL: {intraday_streamlit_url}")
         print(f"Long-term Analysis Streamlit URL: {long_term_streamlit_url}")
-        
+
         # Run both agents in parallel
         print("\nRunning both agents in parallel...")
-        
+
         # Open URLs in browser before starting agent tasks
         print("\nOpening browser tabs for all services...")
         open_url_in_browser(intraday_jupyter_url)
         open_url_in_browser(intraday_streamlit_url, delay=1)
         open_url_in_browser(long_term_jupyter_url, delay=2)
         open_url_in_browser(long_term_streamlit_url, delay=3)
-        
+
         # Create tasks for both agents to run concurrently
         intraday_task = Runner.run(
             intraday_agent,
@@ -731,23 +785,29 @@ async def run_parallel_analysis(snapshot_id: str):
             context=intraday_sandbox,
             max_turns=200,  # Increased max turns to give more time to complete all stages
         )
-        
+
         long_term_task = Runner.run(
             long_term_agent,
             "Analyze long-term patterns and investment strategies for Tesla stock. Your task is complete ONLY when you've implemented all 5 stages with ALL requirements specified in the instructions. Make sure to verify each component works before moving on.",
             context=long_term_sandbox,
             max_turns=200,  # Increased max turns to give more time to complete all stages
         )
-        
+
         # Wait for both agents to complete
-        intraday_result, long_term_result = await asyncio.gather(intraday_task, long_term_task)
-        
+        intraday_result, long_term_result = await asyncio.gather(
+            intraday_task, long_term_task
+        )
+
         print("Both agents have completed their analyses.")
-        
+
         # Create snapshots of the final states AFTER agent work
         print("\nCreating snapshots of the analysis results...")
-        intraday_snapshot_id = await intraday_sandbox.snapshot(digest="intraday-analysis-complete")
-        long_term_snapshot_id = await long_term_sandbox.snapshot(digest="long-term-analysis-complete")
+        intraday_snapshot_id = await intraday_sandbox.snapshot(
+            digest="intraday-analysis-complete"
+        )
+        long_term_snapshot_id = await long_term_sandbox.snapshot(
+            digest="long-term-analysis-complete"
+        )
         print("\n====== Parallel Analysis Complete ======")
         print("\nIntraday Analysis:")
         print(f"JupyterLab URL: {intraday_jupyter_url}")
@@ -757,13 +817,16 @@ async def run_parallel_analysis(snapshot_id: str):
         print(f"JupyterLab URL: {long_term_jupyter_url}")
         print(f"Streamlit URL: {long_term_streamlit_url}")
         print(f"Snapshot ID: {long_term_snapshot_id}")
-        
+
         # URLs already opened before agents started running
         print("\nAll browser tabs should already be open")
-        
+
         # Ask if user wants to keep sandboxes running
-        keep_running = input("\nKeep analysis sandboxes running? (y/n, default: y): ").lower() != 'n'
-        
+        keep_running = (
+            input("\nKeep analysis sandboxes running? (y/n, default: y): ").lower()
+            != "n"
+        )
+
         if not keep_running:
             print("Stopping analysis sandboxes...")
             await intraday_sandbox.stop()
@@ -771,20 +834,20 @@ async def run_parallel_analysis(snapshot_id: str):
             print("Analysis sandboxes stopped.")
         else:
             print("Analysis sandboxes are still running.")
-        
+
         return {
             "intraday_analysis": {
                 "jupyter_url": intraday_jupyter_url,
                 "streamlit_url": intraday_streamlit_url,
                 "snapshot_id": intraday_snapshot_id,
-                "result": intraday_result.final_output
+                "result": intraday_result.final_output,
             },
             "long_term_analysis": {
                 "jupyter_url": long_term_jupyter_url,
                 "streamlit_url": long_term_streamlit_url,
                 "snapshot_id": long_term_snapshot_id,
-                "result": long_term_result.final_output
-            }
+                "result": long_term_result.final_output,
+            },
         }
     except Exception as e:
         print(f"Error during parallel analysis: {str(e)}")
@@ -792,21 +855,35 @@ async def run_parallel_analysis(snapshot_id: str):
         await long_term_sandbox.stop()
         raise
 
+
 #######################
 # Main Function
 #######################
+
 
 async def main():
     """Main function to run the entire workflow."""
     # Parse command line arguments
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Tesla Stock Analysis with MorphSandbox and Agents")
-    parser.add_argument("--snapshot", help="Snapshot ID of prepared environment", default=None)
-    parser.add_argument("--setup-only", action="store_true", help="Only perform initial setup, no agent analysis")
-    parser.add_argument("--analysis-only", action="store_true", help="Only perform agent analysis using existing snapshot")
+
+    parser = argparse.ArgumentParser(
+        description="Tesla Stock Analysis with MorphSandbox and Agents"
+    )
+    parser.add_argument(
+        "--snapshot", help="Snapshot ID of prepared environment", default=None
+    )
+    parser.add_argument(
+        "--setup-only",
+        action="store_true",
+        help="Only perform initial setup, no agent analysis",
+    )
+    parser.add_argument(
+        "--analysis-only",
+        action="store_true",
+        help="Only perform agent analysis using existing snapshot",
+    )
     args = parser.parse_args()
-    
+
     try:
         # Determine workflow
         if args.analysis_only and args.snapshot:
@@ -817,25 +894,31 @@ async def main():
             # Run only the initial setup
             print("Running only initial environment setup...")
             result = await setup_initial_sandbox(args.snapshot)
-            print(f"\nSetup complete! Use snapshot ID {result['snapshot_id']} for agent analysis.")
+            print(
+                f"\nSetup complete! Use snapshot ID {result['snapshot_id']} for agent analysis."
+            )
         else:
             # Run full workflow
             print("Running full workflow: initial setup + parallel agent analysis...")
             setup_result = await setup_initial_sandbox(args.snapshot)
             snapshot_id = setup_result["snapshot_id"]
-            
+
             # Clean up the initial setup sandbox before agent analysis?
-            keep_initial = input("\nKeep initial sandbox running? (y/n, default: n): ").lower() == 'y'
+            keep_initial = (
+                input("\nKeep initial sandbox running? (y/n, default: n): ").lower()
+                == "y"
+            )
             if not keep_initial:
                 print("Stopping initial sandbox...")
                 await setup_result["sandbox"].stop()
                 print("Initial sandbox stopped.")
-            
+
             # Run parallel analysis with agents
             await run_parallel_analysis(snapshot_id)
     except Exception as e:
         print(f"Error in main workflow: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     asyncio.run(main())

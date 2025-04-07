@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # /// script
 # dependencies = [
@@ -15,25 +14,22 @@
 
 This script combines the EmulatorClient and PokemonAgent to set up a basic agent.
 """
-import io
-import sys
-import json
-import copy
-import typing
-import base64
-import logging
 import argparse
+import base64
+import copy
+import io
+import json
+import logging
+import sys
 import time
-
-import requests
+import typing
 import webbrowser
 
-from PIL import Image
-
+import requests
 from anthropic import Anthropic
-from rich.console import Console
-
 from morphcloud.api import MorphCloudClient
+from PIL import Image
+from rich.console import Console
 
 # Set up logging - this will be configured properly in main() based on command line args
 logger = logging.getLogger(__name__)
@@ -207,16 +203,18 @@ class EmulatorClient:
     def initialize(self, max_retries=5, retry_delay=3):
         """
         Initialize method with retry capability for compatibility with Emulator
-        
+
         Args:
             max_retries (int): Maximum number of retry attempts
             retry_delay (int): Delay between retries in seconds
-            
+
         Returns:
             bool: True if server is ready, False otherwise
         """
-        logger.info(f"Client initialization requested (compatibility method) with {max_retries} retries")
-        
+        logger.info(
+            f"Client initialization requested (compatibility method) with {max_retries} retries"
+        )
+
         # Implement retry logic
         for attempt in range(1, max_retries + 1):
             try:
@@ -224,36 +222,41 @@ class EmulatorClient:
                 response = requests.get(f"{self.base_url}/api/status", timeout=10)
                 status = response.json()
                 ready = status.get("ready", False)
-                
+
                 if ready:
                     logger.info("Server reports ready status")
                     return True
                 else:
-                    logger.warning(f"Server reports not ready (attempt {attempt}/{max_retries})")
-                    
+                    logger.warning(
+                        f"Server reports not ready (attempt {attempt}/{max_retries})"
+                    )
+
                 # If not ready and we have more attempts, wait before trying again
                 if attempt < max_retries:
                     logger.info(f"Waiting {retry_delay} seconds before retry...")
                     time.sleep(retry_delay)
-                    
+
             except requests.exceptions.Timeout:
                 logger.warning(f"Connection timeout (attempt {attempt}/{max_retries})")
                 if attempt < max_retries:
                     time.sleep(retry_delay)
-                    
+
             except requests.exceptions.ConnectionError as e:
-                logger.warning(f"Connection error: {e} (attempt {attempt}/{max_retries})")
+                logger.warning(
+                    f"Connection error: {e} (attempt {attempt}/{max_retries})"
+                )
                 if attempt < max_retries:
                     time.sleep(retry_delay)
-                    
+
             except Exception as e:
-                logger.error(f"Error checking server status: {e} (attempt {attempt}/{max_retries})")
+                logger.error(
+                    f"Error checking server status: {e} (attempt {attempt}/{max_retries})"
+                )
                 if attempt < max_retries:
                     time.sleep(retry_delay)
-        
+
         logger.error(f"Server not ready after {max_retries} attempts")
         return False
-
 
     def stop(self):
         """Empty stop method for compatibility with Emulator"""
@@ -304,11 +307,13 @@ class PokemonAgent:
             {"role": "user", "content": "You may now begin playing."}
         ]
         self.max_history = max_history
-        
+
         # Store the MorphCloud client and snapshot tracking IDs
         self.morph_client = morph_client
         self.parent_snapshot_id = parent_snapshot_id
-        self.dashboard_run_id = dashboard_run_id or parent_snapshot_id  # Use parent as fallback
+        self.dashboard_run_id = (
+            dashboard_run_id or parent_snapshot_id
+        )  # Use parent as fallback
         self.last_snapshot_id = parent_snapshot_id  # Track the last created snapshot ID
 
         # Set display configuration with defaults
@@ -321,9 +326,13 @@ class PokemonAgent:
         # Log initialization with chosen configuration
         logger.debug(f"Agent initialized with display config: {self.display_config}")
         if self.morph_client and self.parent_snapshot_id:
-            logger.info(f"Snapshot tracking enabled. Parent snapshot: {self.parent_snapshot_id}")
+            logger.info(
+                f"Snapshot tracking enabled. Parent snapshot: {self.parent_snapshot_id}"
+            )
             if self.dashboard_run_id:
-                logger.info(f"Dashboard run ID for grouping snapshots: {self.dashboard_run_id}")
+                logger.info(
+                    f"Dashboard run ID for grouping snapshots: {self.dashboard_run_id}"
+                )
 
         # Check if the server is ready
         if not self.client.initialize():
@@ -624,7 +633,7 @@ The summary should be comprehensive enough that you can continue gameplay withou
 
         steps_completed = 0
         snapshots = []
-        
+
         while self.running and steps_completed < num_steps:
             try:
                 messages = copy.deepcopy(self.message_history)
@@ -724,12 +733,16 @@ The summary should be comprehensive enough that you can continue gameplay withou
                     logger.debug(f"Completed step {steps_completed}/{num_steps}")
                 else:
                     logger.info(f"Completed step {steps_completed}/{num_steps}")
-                
+
                 # Create a snapshot after each step if morph_client and instance_id are provided
                 if self.morph_client and instance_id:
                     step_num = steps_completed
-                    snapshot_name = f"{snapshot_name_prefix}_step_{step_num}" if snapshot_name_prefix else f"pokemon_step_{step_num}"
-                    
+                    snapshot_name = (
+                        f"{snapshot_name_prefix}_step_{step_num}"
+                        if snapshot_name_prefix
+                        else f"pokemon_step_{step_num}"
+                    )
+
                     logger.info(f"Creating snapshot after step {step_num}...")
                     try:
                         # Create metadata dictionary to track lineage
@@ -737,38 +750,42 @@ The summary should be comprehensive enough that you can continue gameplay withou
                             "step_number": str(step_num),
                             "timestamp": str(int(time.time())),
                         }
-                        
+
                         # Add parent_snapshot if we have one
                         if self.parent_snapshot_id:
                             metadata["parent_snapshot"] = self.parent_snapshot_id
-                            
+
                         # Add dashboard_run_id for filtering in dashboard
                         if self.dashboard_run_id:
                             metadata["dashboard_run_id"] = self.dashboard_run_id
-                            
+
                         # Add previous snapshot if we have one
                         if self.last_snapshot_id:
                             metadata["prev_snapshot"] = self.last_snapshot_id
-                            
+
                         # Create the snapshot with metadata
                         instance = self.morph_client.instances.get(instance_id)
-                        
+
                         snapshot = instance.snapshot()
                         snapshot.set_metadata(metadata)
-                        
+
                         # Update our last snapshot ID
                         self.last_snapshot_id = snapshot.id
-                        
+
                         logger.info(f"✅ Snapshot created with ID: {snapshot.id}")
-                        logger.info(f"   Metadata: parent={metadata.get('parent_snapshot', 'None')}, prev={metadata.get('prev_snapshot', 'None')}, step={step_num}, dashboard_run_id={metadata.get('dashboard_run_id', 'None')}")
-                        
+                        logger.info(
+                            f"   Metadata: parent={metadata.get('parent_snapshot', 'None')}, prev={metadata.get('prev_snapshot', 'None')}, step={step_num}, dashboard_run_id={metadata.get('dashboard_run_id', 'None')}"
+                        )
+
                         # Keep track of all snapshots
-                        snapshots.append({
-                            'step': step_num,
-                            'snapshot_id': snapshot.id,
-                            'name': snapshot_name,
-                            'metadata': metadata
-                        })
+                        snapshots.append(
+                            {
+                                "step": step_num,
+                                "snapshot_id": snapshot.id,
+                                "name": snapshot_name,
+                                "metadata": metadata,
+                            }
+                        )
                     except Exception as e:
                         logger.error(f"Failed to create snapshot: {e}")
 
@@ -903,23 +920,23 @@ def parse_arguments():
         default=30,
         help="Maximum history size before summarizing (default: 30)",
     )
-    
+
     # Add parent snapshot tracking option
     parser.add_argument(
         "--parent-snapshot-id",
         type=str,
-        help="Parent snapshot ID for lineage tracking (defaults to the starting snapshot-id)"
+        help="Parent snapshot ID for lineage tracking (defaults to the starting snapshot-id)",
     )
     parser.add_argument(
         "--dashboard-run-id",
         type=str,
-        help="Dashboard run ID for grouping snapshots (defaults to parent-snapshot-id)"
+        help="Dashboard run ID for grouping snapshots (defaults to parent-snapshot-id)",
     )
     parser.add_argument(
         "--snapshot-prefix",
         type=str,
         default="pokemon",
-        help="Prefix for snapshot names (default: 'pokemon')"
+        help="Prefix for snapshot names (default: 'pokemon')",
     )
 
     # Add verbosity and display options
@@ -952,7 +969,7 @@ def parse_arguments():
         help="Only show Claude's thoughts and actions, minimal logging",
     )
     parser.add_argument(
-        "--no-browser", 
+        "--no-browser",
         action="store_true",
         help="Suppress auto-opening the browser to display the game",
     )
@@ -1005,11 +1022,11 @@ def main():
     console.print(
         f"Will run for {args.steps} steps with max history of {args.max_history}"
     )
-    
+
     # Set parent snapshot ID (if not provided, use the starting snapshot as parent)
     parent_snapshot_id = args.parent_snapshot_id or args.snapshot_id
     console.print(f"Parent snapshot ID for lineage tracking: {parent_snapshot_id}")
-    
+
     if not args.quiet:
         console.print(
             f"Log level: {'QUIET' if args.quiet else logging.getLevelName(log_level)}"
@@ -1055,8 +1072,10 @@ def main():
     if not args.no_browser:
         webbrowser.open(novnc_url)
     else:
-        console.print("Browser auto-open suppressed. Use the URL above to view the game.")
-        
+        console.print(
+            "Browser auto-open suppressed. Use the URL above to view the game."
+        )
+
     # Create a "game display" configuration object to pass to the agent
     display_config = {
         "show_game_state": args.show_game_state or args.verbose > 0,
@@ -1085,17 +1104,19 @@ def main():
         steps_completed, snapshots = agent.run(
             num_steps=args.steps,
             instance_id=instance.id,
-            snapshot_name_prefix=args.snapshot_prefix
+            snapshot_name_prefix=args.snapshot_prefix,
         )
 
         console.print("=" * 50)
         console.print(f"✅ Agent completed {steps_completed} steps")
-        
+
         # Display a summary of created snapshots
         if snapshots:
             console.print(f"\nCreated {len(snapshots)} snapshots:")
             for snapshot in snapshots:
-                console.print(f"  - Step {snapshot['step']}: {snapshot['snapshot_id']} ({snapshot['name']})")
+                console.print(
+                    f"  - Step {snapshot['step']}: {snapshot['snapshot_id']} ({snapshot['name']})"
+                )
 
     except ConnectionError as e:
         console.print(f"❌ Connection error: {e}")

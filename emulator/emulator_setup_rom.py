@@ -11,11 +11,12 @@ Setup script for creating a Morph Cloud VM with a remote desktop emulator enviro
 Uses snapshot caching for faster setup and SFTP for ROM uploads.
 """
 
+import argparse
 import os
 import sys
 import time
-import argparse
 from pathlib import Path
+
 from dotenv import load_dotenv
 from morphcloud.api import MorphCloudClient
 
@@ -24,44 +25,50 @@ env_path = Path(__file__).parent / ".env"
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 
+
 def parse_arguments():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Set up a remote desktop emulator environment and upload a ROM file.')
-    parser.add_argument('--rom', type=str, help='Path to the ROM file to upload to the emulator')
+    parser = argparse.ArgumentParser(
+        description="Set up a remote desktop emulator environment and upload a ROM file."
+    )
+    parser.add_argument(
+        "--rom", type=str, help="Path to the ROM file to upload to the emulator"
+    )
     return parser.parse_args()
+
 
 def upload_rom_via_sftp(instance, local_path):
     """Upload a ROM file to the instance using Paramiko SFTP"""
     if not os.path.exists(local_path):
         print(f"Error: ROM file not found at {local_path}")
         return False
-    
+
     filename = os.path.basename(local_path)
     remote_path = f"/root/BizHawk/ROMs/{filename}"
-    
+
     print(f"\n=== 📤 Uploading ROM file: {local_path} ===")
-    
+
     # Connect via SSH and create directory
     print("Ensuring ROM directory exists...")
     instance.exec("mkdir -p /root/BizHawk/ROMs && chmod 777 /root/BizHawk/ROMs")
-    
+
     # Get an SSH client from the instance
     ssh_client = instance.ssh_connect()
     sftp = None
-    
+
     try:
         # Open SFTP session
         sftp = ssh_client.open_sftp()
-        
+
         # Upload the file
         print(f"Uploading {filename} to {remote_path}...")
         sftp.put(local_path, remote_path)
-        
+
         # Set permissions
         sftp.chmod(remote_path, 0o644)
-        
+
         print(f"✅ ROM file uploaded successfully")
-        
+
         # Configure BizHawk to load this ROM at startup
         setup_auto_load_rom(instance, remote_path)
         return True
@@ -72,31 +79,35 @@ def upload_rom_via_sftp(instance, local_path):
         if sftp:
             sftp.close()
         ssh_client.close()
+
+
 def setup_auto_load_rom(instance, rom_path):
     """Configure BizHawk to automatically load the ROM at startup"""
     print("\n=== 🎮 Configuring BizHawk to auto-load ROM ===")
-    
+
     # Create the start script one command at a time to avoid escaping issues
     instance.exec("mkdir -p /root/BizHawk")
-    
+
     # Create the startup script file
     script_content = f"""#!/bin/bash
 cd /root/BizHawk
 ./EmuHawkMono.sh "{rom_path}" --fullscreen
 """
-    
+
     # Write the script content to a file on the instance
-    result = instance.exec(f"cat > /root/BizHawk/start-with-rom.sh << 'EOFSCRIPT'\n{script_content}EOFSCRIPT")
+    result = instance.exec(
+        f"cat > /root/BizHawk/start-with-rom.sh << 'EOFSCRIPT'\n{script_content}EOFSCRIPT"
+    )
     if result.exit_code != 0:
         print(f"❌ Error creating startup script: {result.stderr}")
         return False
-    
+
     # Make the script executable
     result = instance.exec("chmod +x /root/BizHawk/start-with-rom.sh")
     if result.exit_code != 0:
         print(f"❌ Error making script executable: {result.stderr}")
         return False
-    
+
     # Create a new service file rather than modifying existing one
     service_content = """[Unit]
 Description=BizHawk Emulator with ROM
@@ -114,40 +125,45 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 """
-    
+
     # Write the service file
-    result = instance.exec(f"cat > /etc/systemd/system/bizhawk-rom.service << 'EOFSERVICE'\n{service_content}EOFSERVICE")
+    result = instance.exec(
+        f"cat > /etc/systemd/system/bizhawk-rom.service << 'EOFSERVICE'\n{service_content}EOFSERVICE"
+    )
     if result.exit_code != 0:
         print(f"❌ Error creating service file: {result.stderr}")
         return False
-    
+
     # Stop existing BizHawk service if running
     instance.exec("systemctl stop bizhawk || true")
-    
+
     # Enable and start the new service
-    result = instance.exec("systemctl daemon-reload && systemctl enable bizhawk-rom && systemctl restart bizhawk-rom")
+    result = instance.exec(
+        "systemctl daemon-reload && systemctl enable bizhawk-rom && systemctl restart bizhawk-rom"
+    )
     if result.exit_code != 0:
         print(f"❌ Error starting service: {result.stderr}")
         return False
-    
+
     print("✅ ROM auto-load configured successfully")
     return True
+
 
 def automate_initial_interactions(instance):
     """Automate initial mouse movements and clicks to help with setup"""
     print("\n=== 🖱 Automating initial interactions ===")
-    
+
     # Give services time to fully start up
     print("Waiting for desktop to initialize...")
     instance.exec("sleep 5")
-    
+
     # Execute just the first two mouse commands
     print("Performing initial mouse clicks...")
     mouse_commands = [
         "DISPLAY=:1 xdotool mousemove 755 473 click 1",
-        "DISPLAY=:1 xdotool mousemove 644 442 click 1"
+        "DISPLAY=:1 xdotool mousemove 644 442 click 1",
     ]
-    
+
     for cmd in mouse_commands:
         result = instance.exec(cmd)
         if result.exit_code != 0:
@@ -155,27 +171,27 @@ def automate_initial_interactions(instance):
             print(f"Error: {result.stderr}")
         else:
             print(f"✅ Executed: {cmd}")
-        
+
         # Add a short delay between commands
         instance.exec("sleep 1")
-    
+
     print("✅ Initial interactions completed")
+
 
 def main():
     args = parse_arguments()
-    
+
     # Create client (will use MORPH_API_KEY from environment)
     client = MorphCloudClient()
-    
+
     print("\n=== 🚀 Starting emulator setup ===")
-    
+
     # Create or get a base snapshot with reasonable specs
     print("\n=== 🔍 Finding or creating base snapshot ===")
     snapshots = client.snapshots.list(
-        digest="emulator-snapshot",
-        metadata={"purpose": "emulator"}
+        digest="emulator-snapshot", metadata={"purpose": "emulator"}
     )
-    
+
     if snapshots:
         base_snapshot = snapshots[0]
         print(f"✅ Using existing base snapshot: {base_snapshot.id}")
@@ -186,10 +202,10 @@ def main():
             memory=8192,
             disk_size=8192,
             digest="emulator-snapshot",
-            metadata={"purpose": "emulator"}
+            metadata={"purpose": "emulator"},
         )
         print(f"✅ Created new base snapshot: {base_snapshot.id}")
-    
+
     # Install desktop environment packages - this uses caching!
     print("\n=== 🔧 Setting up desktop environment (cached) ===")
     desktop_setup_script = """
@@ -212,12 +228,12 @@ rm -f /tmp/.X1-lock /tmp/.X11-unix/X1 || true
 # Create config directories
 mkdir -p /root/.config/xfce4 /root/.config/xfce4-session /root/.config/autostart /root/.config/systemd
 """
-    
+
     start_time = time.time()
     desktop_snapshot = base_snapshot.setup(desktop_setup_script)
     end_time = time.time()
     print(f"⏱️ Desktop environment setup time: {end_time - start_time:.2f} seconds")
-    
+
     # Set up services - this also uses caching!
     print("\n=== 🔧 Setting up services (cached) ===")
     services_setup_script = """
@@ -327,12 +343,12 @@ rm -f /etc/nginx/sites-enabled/default
 systemctl daemon-reload
 systemctl enable vncserver xfce-session novnc nginx
 """
-    
+
     start_time = time.time()
     services_snapshot = desktop_snapshot.setup(services_setup_script)
     end_time = time.time()
     print(f"⏱️ Services setup time: {end_time - start_time:.2f} seconds")
-    
+
     # Install BizHawk - this uses caching!
     print("\n=== 🔧 Setting up BizHawk emulator (cached) ===")
     bizhawk_setup_script = """
@@ -385,35 +401,37 @@ systemctl daemon-reload
 systemctl enable bizhawk
 rm -f BizHawk-2.10-linux-x64.tar.gz
 """
-    
+
     start_time = time.time()
     bizhawk_snapshot = services_snapshot.setup(bizhawk_setup_script)
     end_time = time.time()
     print(f"⏱️ BizHawk setup time: {end_time - start_time:.2f} seconds")
-    
+
     # Start an instance from the final snapshot
     print("\n=== 🚀 Starting instance from final snapshot ===")
     print(f"Snapshot ID: {bizhawk_snapshot.id}")
     instance = client.instances.start(bizhawk_snapshot.id)
-    
+
     try:
         print("⏳ Waiting for instance to be ready...")
         instance.wait_until_ready(timeout=300)
         print(f"✅ Instance {instance.id} is ready")
-        
+
         # Expose HTTP service for desktop
         print("\n=== 🌐 Exposing desktop service ===")
         url = instance.expose_http_service("desktop", 80)
         print(f"✅ Desktop service exposed at {url}")
-        
+
         # Start the services
         print("\n=== 🔄 Starting services ===")
-        result = instance.exec("systemctl daemon-reload && systemctl restart vncserver xfce-session novnc nginx bizhawk")
+        result = instance.exec(
+            "systemctl daemon-reload && systemctl restart vncserver xfce-session novnc nginx bizhawk"
+        )
         if result.exit_code == 0:
             print("✅ All services started successfully")
         else:
             print(f"⚠️ Some services may not have started correctly: {result.stderr}")
-        
+
         # Upload ROM if specified and perform interactions after ROM is loaded
         if args.rom:
             if upload_rom_via_sftp(instance, args.rom):
@@ -427,39 +445,42 @@ rm -f BizHawk-2.10-linux-x64.tar.gz
             print("\n=== ⌛ Waiting for emulator to start ===")
             instance.exec("sleep 5")
             automate_initial_interactions(instance)
-        
+
         # Print access information
         print("\n=== 🎮 EMULATOR READY! ===")
         print(f"Instance ID: {instance.id}")
         print(f"Access your remote desktop at: {url}/vnc_lite.html")
-        print(f"Alternative URL: https://desktop-{instance.id.replace('_', '-')}.http.cloud.morph.so/vnc_lite.html")
-        
+        print(
+            f"Alternative URL: https://desktop-{instance.id.replace('_', '-')}.http.cloud.morph.so/vnc_lite.html"
+        )
+
         # Create a final snapshot with the ROM and setup included
         print("\n=== 💾 Creating final snapshot ===")
         final_snapshot = instance.snapshot()
-        
+
         # Add metadata about the ROM
         metadata = {
             "type": "emulator-complete",
             "description": "Remote desktop environment with XFCE, noVNC, and BizHawk",
-            "has_rom": "true" if args.rom else "false"
+            "has_rom": "true" if args.rom else "false",
         }
         if args.rom:
             metadata["rom_file"] = os.path.basename(args.rom)
-        
+
         final_snapshot.set_metadata(metadata)
         print(f"✅ Final snapshot created: {final_snapshot.id}")
         print(f"To start a new instance from this exact state, run:")
         print(f"morphcloud instance start {final_snapshot.id}")
-        
+
         print("\nThe instance will remain running. To stop it when you're done, run:")
         print(f"morphcloud instance stop {instance.id}")
-        
+
     except Exception as e:
         print(f"\n❌ Error: {e}")
         print("For troubleshooting, try SSH:")
         print(f"morphcloud instance ssh {instance.id}")
         raise
+
 
 if __name__ == "__main__":
     main()

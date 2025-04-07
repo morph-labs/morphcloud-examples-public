@@ -1,28 +1,30 @@
 import asyncio
+import logging
 import os
 import sys
-import logging
-from typing import Optional
 from contextlib import AsyncExitStack, asynccontextmanager
+from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 import anyio
 import httpx
-from anyio.abc import TaskStatus
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from httpx_sse import aconnect_sse
-
-from mcp import ClientSession
 import mcp.types as types
-
 from anthropic import Anthropic
+from anyio.abc import TaskStatus
+from anyio.streams.memory import (MemoryObjectReceiveStream,
+                                  MemoryObjectSendStream)
 from dotenv import load_dotenv
+from httpx_sse import aconnect_sse
+from mcp import ClientSession
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 load_dotenv()  # load environment variables from .env
+
 
 def remove_request_params(url: str) -> str:
     return urljoin(url, urlparse(url).path)
@@ -40,7 +42,7 @@ async def sse_client(
 
     `sse_read_timeout` determines how long (in seconds) the client will wait for a new
     event before disconnecting. All other HTTP operations are controlled by `timeout`.
-    
+
     For authenticated endpoints, pass the API key in the headers:
     headers={"Authorization": "Bearer YOUR_MORPH_API_KEY"}
     """
@@ -58,7 +60,7 @@ async def sse_client(
             logger.info(f"Connecting to SSE endpoint: {remove_request_params(url)}")
             if headers and "Authorization" in headers:
                 logger.info("Using API key authentication")
-                
+
             async with httpx.AsyncClient(headers=headers) as client:
                 async with aconnect_sse(
                     client,
@@ -140,8 +142,13 @@ async def sse_client(
                                     )
                         except Exception as exc:
                             logger.error(f"Error in post_writer: {exc}")
-                            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 401:
-                                logger.error("Authentication failed. Check your API key.")
+                            if (
+                                isinstance(exc, httpx.HTTPStatusError)
+                                and exc.response.status_code == 401
+                            ):
+                                logger.error(
+                                    "Authentication failed. Check your API key."
+                                )
                         finally:
                             await write_stream.aclose()
 
@@ -166,13 +173,13 @@ class MCPClient:
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
         self.anthropic = Anthropic()
-        
+
         # Get API key from argument or environment variable
         self.api_key = api_key or os.getenv("MORPH_API_KEY")
 
     async def connect_to_server(self, server_url: str):
         """Connect to an MCP server via SSE
-        
+
         Args:
             server_url: URL of the server's SSE endpoint
         """
@@ -181,15 +188,17 @@ class MCPClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
             print("Using API key authentication")
-        
+
         # Connect to the SSE endpoint with authorization headers
         streams = await self.exit_stack.enter_async_context(
             sse_client(server_url, headers=headers)
         )
-        self.session = await self.exit_stack.enter_async_context(ClientSession(streams[0], streams[1]))
-        
+        self.session = await self.exit_stack.enter_async_context(
+            ClientSession(streams[0], streams[1])
+        )
+
         await self.session.initialize()
-        
+
         # List available tools
         response = await self.session.list_tools()
         tools = response.tools
@@ -197,26 +206,24 @@ class MCPClient:
 
     async def process_query(self, query: str) -> str:
         """Process a query using Claude and available tools"""
-        messages = [
-            {
-                "role": "user",
-                "content": query
-            }
-        ]
+        messages = [{"role": "user", "content": query}]
 
         response = await self.session.list_tools()
-        available_tools = [{ 
-            "name": tool.name,
-            "description": tool.description,
-            "input_schema": tool.inputSchema
-        } for tool in response.tools]
+        available_tools = [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.inputSchema,
+            }
+            for tool in response.tools
+        ]
 
         # Initial Claude API call
         response = self.anthropic.messages.create(
             model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
             messages=messages,
-            tools=available_tools
+            tools=available_tools,
         )
 
         # Process response and handle tool calls
@@ -224,27 +231,21 @@ class MCPClient:
         final_text = []
 
         for content in response.content:
-            if content.type == 'text':
+            if content.type == "text":
                 final_text.append(content.text)
-            elif content.type == 'tool_use':
+            elif content.type == "tool_use":
                 tool_name = content.name
                 tool_args = content.input
-                
+
                 # Execute tool call
                 result = await self.session.call_tool(tool_name, tool_args)
                 tool_results.append({"call": tool_name, "result": result})
                 final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
 
                 # Continue conversation with tool results
-                if hasattr(content, 'text') and content.text:
-                    messages.append({
-                      "role": "assistant",
-                      "content": content.text
-                    })
-                messages.append({
-                    "role": "user", 
-                    "content": result.content
-                })
+                if hasattr(content, "text") and content.text:
+                    messages.append({"role": "assistant", "content": content.text})
+                messages.append({"role": "user", "content": result.content})
 
                 # Get next response from Claude
                 response = self.anthropic.messages.create(
@@ -261,20 +262,20 @@ class MCPClient:
         """Run an interactive chat loop"""
         print("\nMCP Client Started!")
         print("Type your queries or 'quit' to exit.")
-        
+
         while True:
             try:
                 query = input("\nQuery: ").strip()
-                
-                if query.lower() == 'quit':
+
+                if query.lower() == "quit":
                     break
-                    
+
                 response = await self.process_query(query)
                 print("\n" + response)
-                    
+
             except Exception as e:
                 print(f"\nError: {str(e)}")
-    
+
     async def cleanup(self):
         """Clean up resources"""
         await self.exit_stack.aclose()
@@ -286,10 +287,10 @@ async def main():
         print("Example: python client_sse.py http://localhost:8000/sse")
         print("You can also set the MORPH_API_KEY environment variable")
         sys.exit(1)
-    
+
     # Allow API key to be passed as second command-line argument
     api_key = sys.argv[2] if len(sys.argv) > 2 else None
-        
+
     client = MCPClient(api_key=api_key)
     try:
         await client.connect_to_server(sys.argv[1])

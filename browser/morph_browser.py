@@ -2,14 +2,15 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #     "morphcloud",
-#     "aiohttp", 
-#     "rich"      
+#     "aiohttp",
+#     "rich"
 # ]
 # ///
 
+import asyncio
 import os
 import time
-import asyncio
+
 import aiohttp
 from rich.console import Console
 
@@ -17,14 +18,19 @@ from rich.console import Console
 try:
     from morphcloud.api import MorphCloudClient
 except ImportError:
-    print("Error: morphcloud package not installed. Install with 'pip install morphcloud'")
+    print(
+        "Error: morphcloud package not installed. Install with 'pip install morphcloud'"
+    )
     exit(1)
 
 console = Console()
 
+
 class InvalidBrowserSnapshotError(Exception):
     """Raised when a snapshot does not contain valid browser services."""
+
     pass
+
 
 class MorphBrowser:
     """Manages browser instances on MorphCloud with service setup and snapshot capabilities.
@@ -51,7 +57,9 @@ class MorphBrowser:
 
         if snapshot_id:
             # Start from existing snapshot
-            console.print(f"[yellow]Starting instance from snapshot {snapshot_id}...[/yellow]")
+            console.print(
+                f"[yellow]Starting instance from snapshot {snapshot_id}...[/yellow]"
+            )
             self.instance = await self._client.instances.astart(snapshot_id)
             self.snapshot_id = snapshot_id
 
@@ -62,7 +70,9 @@ class MorphBrowser:
                 except Exception as e:
                     # Stop the instance before raising the error
                     if self.instance:
-                        console.print("[yellow]Stopping instance due to validation failure...[/yellow]")
+                        console.print(
+                            "[yellow]Stopping instance due to validation failure...[/yellow]"
+                        )
                         await self.instance.astop()
                         self.instance = None
 
@@ -72,16 +82,24 @@ class MorphBrowser:
                         "Please create a new browser snapshot with MorphBrowser.create_for_user_setup()"
                     ) from e
             else:
-                console.print("[yellow]Skipping service verification (verify=False)[/yellow]")
+                console.print(
+                    "[yellow]Skipping service verification (verify=False)[/yellow]"
+                )
         else:
             # Create new instance with browser setup
-            console.print("[yellow]Creating new browser instance from scratch...[/yellow]")
-            self.instance = await cls._create_fresh_instance(initial_url=initial_url) # Call as cls._create_fresh_instance
+            console.print(
+                "[yellow]Creating new browser instance from scratch...[/yellow]"
+            )
+            self.instance = await cls._create_fresh_instance(
+                initial_url=initial_url
+            )  # Call as cls._create_fresh_instance
 
         return self
 
     @classmethod
-    async def _create_fresh_instance(cls, initial_url="https://www.google.com"): # Make initial_url a parameter
+    async def _create_fresh_instance(
+        cls, initial_url="https://www.google.com"
+    ):  # Make initial_url a parameter
         """Create a fresh instance with all necessary setup."""
         client = MorphCloudClient()
 
@@ -95,7 +113,8 @@ class MorphBrowser:
 
         # Install required packages
         console.print("[yellow]Installing required packages...[/yellow]")
-        snapshot = snapshot.setup("""
+        snapshot = snapshot.setup(
+            """
             # Add Google Chrome repository key
             wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/trusted.gpg.d/google-chrome.gpg
             # Add Chrome repository
@@ -122,11 +141,13 @@ class MorphBrowser:
             rm -rf /opt/noVNC || true
             git clone https://github.com/novnc/noVNC.git /opt/noVNC
             mkdir -p /root/.config/xfce4
-        """)
+        """
+        )
 
         # Setup services with the provided initial URL
         console.print("[yellow]Setting up browser services...[/yellow]")
-        snapshot = snapshot.setup(f"""
+        snapshot = snapshot.setup(
+            f"""
             # VNC server service
             cat > /etc/systemd/system/vncserver.service << 'EOF'
 [Unit]
@@ -259,7 +280,8 @@ EOF
             systemctl enable nginx
             # Mark this as a browser snapshot
             touch /browser_snapshot_valid
-        """)
+        """
+        )
 
         # Start the instance with this snapshot
         console.print("[yellow]Starting instance from prepared snapshot...[/yellow]")
@@ -277,10 +299,11 @@ EOF
         instance.exec("systemctl restart nginx")
 
         # Expose services immediately after creation
-        browser_url = instance.expose_http_service("web", 80) # Expose web service
-        vnc_url = instance.expose_http_service("vnc", 6080)   # Expose vnc service
-        console.print(f"[green]Services exposed: CDP URL: {browser_url}, VNC URL: {vnc_url}/vnc.html[/green]")
-
+        browser_url = instance.expose_http_service("web", 80)  # Expose web service
+        vnc_url = instance.expose_http_service("vnc", 6080)  # Expose vnc service
+        console.print(
+            f"[green]Services exposed: CDP URL: {browser_url}, VNC URL: {vnc_url}/vnc.html[/green]"
+        )
 
         # Verify services are running correctly
         await cls._verify_instance_services(instance)
@@ -292,23 +315,41 @@ EOF
         """Verify that all required services are running properly on the instance."""
         # First check if this is even a valid browser snapshot
         try:
-            response = instance.exec("test -f /browser_snapshot_valid && echo 'valid' || echo 'invalid'")
+            response = instance.exec(
+                "test -f /browser_snapshot_valid && echo 'valid' || echo 'invalid'"
+            )
             browser_valid = response.stdout.strip()
             if browser_valid != "valid":
-                console.print("[red]This snapshot is not a valid browser snapshot[/red]")
-                raise InvalidBrowserSnapshotError("Snapshot does not contain the expected browser services")
+                console.print(
+                    "[red]This snapshot is not a valid browser snapshot[/red]"
+                )
+                raise InvalidBrowserSnapshotError(
+                    "Snapshot does not contain the expected browser services"
+                )
         except Exception as e:
             console.print(f"[red]Error validating snapshot: {str(e)}[/red]")
             raise InvalidBrowserSnapshotError(f"Failed to validate snapshot: {str(e)}")
 
         # Check if required services exist
-        required_services = ["vncserver", "xfce-session", "chrome-debug", "novnc", "nginx"]
+        required_services = [
+            "vncserver",
+            "xfce-session",
+            "chrome-debug",
+            "novnc",
+            "nginx",
+        ]
         for service in required_services:
-            response = instance.exec(f"systemctl list-unit-files | grep -q {service} && echo 'exists' || echo 'missing'")
+            response = instance.exec(
+                f"systemctl list-unit-files | grep -q {service} && echo 'exists' || echo 'missing'"
+            )
             service_exists = response.stdout.strip()
             if service_exists != "exists":
-                console.print(f"[red]Required service {service} is missing from this snapshot[/red]")
-                raise InvalidBrowserSnapshotError(f"Required service {service} is missing from this snapshot")
+                console.print(
+                    f"[red]Required service {service} is missing from this snapshot[/red]"
+                )
+                raise InvalidBrowserSnapshotError(
+                    f"Required service {service} is missing from this snapshot"
+                )
 
         # Now verify the services are working
         for attempt in range(max_retries):
@@ -326,7 +367,9 @@ EOF
             response = instance.exec("systemctl is-active xfce-session")
             xfce_status = response.stdout.strip()
             if xfce_status != "active":
-                console.print("[yellow]XFCE session not running, restarting...[/yellow]")
+                console.print(
+                    "[yellow]XFCE session not running, restarting...[/yellow]"
+                )
                 instance.exec("systemctl restart xfce-session")
                 instance.exec("sleep 2")
 
@@ -334,7 +377,9 @@ EOF
             response = instance.exec("systemctl is-active chrome-debug")
             chrome_status = response.stdout.strip()
             if chrome_status != "active":
-                console.print("[yellow]Chrome debugger not running, restarting...[/yellow]")
+                console.print(
+                    "[yellow]Chrome debugger not running, restarting...[/yellow]"
+                )
                 instance.exec("systemctl restart chrome-debug")
                 instance.exec("sleep 3")
 
@@ -342,7 +387,9 @@ EOF
             response = instance.exec("netstat -tuln | grep 9223")
             chrome_listening = response.stdout.strip()
             if not chrome_listening:
-                console.print("[yellow]Chrome debugger port not listening, restarting...[/yellow]")
+                console.print(
+                    "[yellow]Chrome debugger port not listening, restarting...[/yellow]"
+                )
                 instance.exec("systemctl restart chrome-debug")
                 instance.exec("sleep 3")
 
@@ -378,9 +425,13 @@ EOF
                 response = instance.exec("curl -s http://localhost:9223/json/version")
                 chrome_response = response.stdout
                 if "webSocketDebuggerUrl" in chrome_response:
-                    console.print("[green]Chrome CDP endpoint is responding correctly[/green]")
+                    console.print(
+                        "[green]Chrome CDP endpoint is responding correctly[/green]"
+                    )
                 else:
-                    console.print("[yellow]Chrome CDP endpoint not returning valid data, waiting...[/yellow]")
+                    console.print(
+                        "[yellow]Chrome CDP endpoint not returning valid data, waiting...[/yellow]"
+                    )
                     instance.exec("sleep 5")  # Wait a bit longer
                     all_active = False
                     failed_services.append("chrome-cdp")
@@ -396,13 +447,17 @@ EOF
             # If we've reached max retries, raise an error
             if attempt == max_retries - 1:
                 failed_list = ", ".join(failed_services)
-                console.print(f"[red]Failed to start required services after {max_retries} attempts[/red]")
+                console.print(
+                    f"[red]Failed to start required services after {max_retries} attempts[/red]"
+                )
                 raise InvalidBrowserSnapshotError(
                     f"Browser snapshot is invalid or corrupted. Failed services: {failed_list}. "
                     "Please create a new browser snapshot with MorphBrowser.create_for_user_setup()"
                 )
 
-            console.print(f"[yellow]Retrying service verification in 5 seconds...[/yellow]")
+            console.print(
+                f"[yellow]Retrying service verification in 5 seconds...[/yellow]"
+            )
             await asyncio.sleep(5)
 
     async def _verify_services(self):
@@ -417,7 +472,9 @@ EOF
         if not self.instance:
             raise ValueError("Cannot snapshot: No active instance")
 
-        console.print(f"[yellow]Creating snapshot{' with digest '+digest if digest else ''}...[/yellow]")
+        console.print(
+            f"[yellow]Creating snapshot{' with digest '+digest if digest else ''}...[/yellow]"
+        )
         snapshot = await self.instance.asnapshot(digest=digest)
         console.print(f"[green]Snapshot created with ID: {snapshot.id}[/green]")
 

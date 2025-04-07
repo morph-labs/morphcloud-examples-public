@@ -14,61 +14,64 @@ Demonstrates multi-stage builds and parallel execution in BuildKit.
 import os
 import sys
 import time
+
 import requests
 from morphcloud.api import MorphCloudClient
+
 
 def run_ssh_command(instance, command, sudo=False, print_output=True):
     """Run a command on the instance via SSH and return the result"""
     if sudo and not command.startswith("sudo "):
         command = f"sudo {command}"
-    
+
     print(f"Running: {command}")
     result = instance.exec(command)
-    
+
     if print_output:
         if result.stdout:
             print(result.stdout)
         if result.stderr:
             print(f"ERR: {result.stderr}", file=sys.stderr)
-    
+
     if result.exit_code != 0:
         print(f"Command failed with exit code {result.exit_code}")
-    
+
     return result
+
 
 def setup_docker_environment(instance):
     """Set up Docker with BuildKit"""
     print("\n--- Setting up Docker environment ---")
-    
+
     # Install Docker and essentials
     run_ssh_command(
         instance,
         "DEBIAN_FRONTEND=noninteractive apt-get update && "
         "DEBIAN_FRONTEND=noninteractive apt-get install -y "
         "docker.io python3-docker git curl",
-        sudo=True
+        sudo=True,
     )
 
     # Enable BuildKit for faster builds
     run_ssh_command(
         instance,
         "mkdir -p /etc/docker && "
-        "echo '{\"features\":{\"buildkit\":true}}' > /etc/docker/daemon.json && "
+        'echo \'{"features":{"buildkit":true}}\' > /etc/docker/daemon.json && '
         "echo 'DOCKER_BUILDKIT=1' >> /etc/environment",
-        sudo=True
+        sudo=True,
     )
 
     # Restart Docker and make sure it's running
     run_ssh_command(instance, "systemctl restart docker", sudo=True)
-    
+
     # Wait for Docker to be fully started
     print("Waiting for Docker to be ready...")
     for i in range(5):
         result = run_ssh_command(
-            instance, 
-            "docker info >/dev/null 2>&1 || echo 'not ready'", 
+            instance,
+            "docker info >/dev/null 2>&1 || echo 'not ready'",
             sudo=True,
-            print_output=False
+            print_output=False,
         )
         if result.exit_code == 0 and "not ready" not in result.stdout:
             print("Docker is ready")
@@ -76,10 +79,11 @@ def setup_docker_environment(instance):
         print(f"Waiting for Docker... ({i+1}/5)")
         time.sleep(3)
 
+
 def create_health_check_app(instance):
     """Create a simple Python health check web server"""
     print("\n--- Creating health check application ---")
-    
+
     # Create health_check.py
     health_check_py = """#!/usr/bin/env python3
 import http.server
@@ -123,17 +127,15 @@ with socketserver.TCPServer(("", PORT), HealthCheckHandler) as httpd:
     print("Health check server running. Access /health endpoint for health status.")
     httpd.serve_forever()
 """
-    
-    run_ssh_command(
-        instance,
-        f"cat > health_check.py << 'EOF'\n{health_check_py}\nEOF"
-    )
+
+    run_ssh_command(instance, f"cat > health_check.py << 'EOF'\n{health_check_py}\nEOF")
     print("Created health_check.py server")
+
 
 def create_index_html(instance):
     """Create index.html with morph labs message and orange cat SVG"""
     print("\n--- Creating index.html ---")
-    
+
     index_html = """<!DOCTYPE html>
 <html>
 <head>
@@ -189,21 +191,19 @@ def create_index_html(instance):
 </body>
 </html>
 """
-    
+
     # Create directory for web content
     run_ssh_command(instance, "mkdir -p www")
-    
+
     # Create index.html
-    run_ssh_command(
-        instance,
-        f"cat > www/index.html << 'EOF'\n{index_html}\nEOF"
-    )
+    run_ssh_command(instance, f"cat > www/index.html << 'EOF'\n{index_html}\nEOF")
     print("Created index.html with orange cat SVG")
+
 
 def create_entrypoint_script(instance):
     """Create entrypoint script to run both servers"""
     print("\n--- Creating entrypoint script ---")
-    
+
     entrypoint_sh = """#!/bin/bash
 # Start the health check server in the background
 python3 /app/health_check.py &
@@ -222,31 +222,27 @@ trap 'kill $HEALTH_PID $HTTP_PID; exit' SIGTERM SIGINT
 # Keep the container running
 wait
 """
-    
-    run_ssh_command(
-        instance,
-        f"cat > entrypoint.sh << 'EOF'\n{entrypoint_sh}\nEOF"
-    )
+
+    run_ssh_command(instance, f"cat > entrypoint.sh << 'EOF'\n{entrypoint_sh}\nEOF")
     run_ssh_command(instance, "chmod +x entrypoint.sh")
     print("Created entrypoint.sh script")
+
 
 def create_requirements_file(instance):
     """Create requirements.txt file"""
     print("\n--- Creating requirements.txt ---")
-    
+
     requirements = """requests==2.28.1
 """
-    
-    run_ssh_command(
-        instance,
-        f"cat > requirements.txt << 'EOF'\n{requirements}\nEOF"
-    )
+
+    run_ssh_command(instance, f"cat > requirements.txt << 'EOF'\n{requirements}\nEOF")
     print("Created requirements.txt")
+
 
 def create_dockerfile(instance):
     """Create a multi-stage Dockerfile with BuildKit features"""
     print("\n--- Creating BuildKit-optimized Dockerfile ---")
-    
+
     dockerfile = """# syntax=docker/dockerfile:1.4
 FROM ubuntu:22.04 AS base
 
@@ -298,12 +294,10 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=3 \\
 # Set entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
 """
-    
-    run_ssh_command(
-        instance,
-        f"cat > Dockerfile << 'EOF'\n{dockerfile}\nEOF"
-    )
+
+    run_ssh_command(instance, f"cat > Dockerfile << 'EOF'\n{dockerfile}\nEOF")
     print("Created BuildKit-optimized Dockerfile")
+
 
 def build_and_run_container(instance):
     """Build and run the Docker container with BuildKit"""
@@ -311,19 +305,19 @@ def build_and_run_container(instance):
     build_result = run_ssh_command(
         instance,
         "DOCKER_BUILDKIT=1 docker build --progress=plain -t morph-demo:latest .",
-        sudo=True
+        sudo=True,
     )
-    
+
     if build_result.exit_code != 0:
         print("Failed to build Docker image")
         return None
-    
+
     print("\n--- Starting container ---")
     # Expose both HTTP services
     instance.expose_http_service("health-check", 8080)
     instance.expose_http_service("web-server", 8081)
     print("Exposed HTTP services on ports 8080 and 8081")
-    
+
     # Run container with environment variables
     result = run_ssh_command(
         instance,
@@ -331,59 +325,59 @@ def build_and_run_container(instance):
         "-e APP_ENV=production "
         "-e APP_VERSION=1.0.0 "
         "--name morph-demo morph-demo:latest",
-        sudo=True
+        sudo=True,
     )
-    
+
     if result.exit_code != 0:
         print("Failed to start container")
         return None
-    
+
     container_id = result.stdout.strip()
-    
+
     # Verify container is running
     time.sleep(2)
     check_result = run_ssh_command(
         instance,
         f"docker ps -q --filter id={container_id}",
         sudo=True,
-        print_output=False
+        print_output=False,
     )
-    
+
     if not check_result.stdout.strip():
         print("\nWarning: Container started but exited immediately.")
         print("Container logs:")
         run_ssh_command(instance, f"docker logs {container_id}", sudo=True)
         return None
-    
+
     print(f"\nContainer {container_id} is running")
-    
+
     # Show running containers
     print("\nRunning containers:")
     run_ssh_command(instance, "docker ps", sudo=True)
-    
+
     return container_id
+
 
 def wait_for_health_check(client, instance, max_retries=20, delay=3):
     """Wait for both health check and web server to be available (at least 1 minute)"""
     instance = client.instances.get(instance.id)  # Refresh instance info
-    
+
     health_url = None
     web_url = None
-    
+
     for service in instance.networking.http_services:
         if service.name == "health-check":
             health_url = f"{service.url}/health"
         elif service.name == "web-server":
             web_url = service.url
-    
+
     if not health_url or not web_url:
         print("❌ Could not find expected HTTP service URLs")
         return False
-    
-    
+
     print(f"Checking health endpoint: {health_url}")
     health_ok = False
-    
+
     for i in range(max_retries):
         try:
             response = requests.get(health_url, timeout=5)
@@ -395,12 +389,12 @@ def wait_for_health_check(client, instance, max_retries=20, delay=3):
             print(f"Attempt {i+1}/{max_retries}: HTTP status {response.status_code}")
         except requests.RequestException as e:
             print(f"Attempt {i+1}/{max_retries}: {str(e)}")
-        
+
         time.sleep(delay)
-    
+
     print(f"\nChecking web server: {web_url}")
     web_ok = False
-    
+
     for i in range(max_retries):
         try:
             response = requests.get(web_url, timeout=5)
@@ -411,77 +405,85 @@ def wait_for_health_check(client, instance, max_retries=20, delay=3):
             print(f"Attempt {i+1}/{max_retries}: HTTP status {response.status_code}")
         except requests.RequestException as e:
             print(f"Attempt {i+1}/{max_retries}: {str(e)}")
-        
+
         time.sleep(delay)
-    
+
     return health_ok and web_ok
+
 
 def main():
     client = MorphCloudClient()
-    
+
     # VM configuration
     VCPUS = 2
     MEMORY = 2048
     DISK_SIZE = 4096
-    
+
     print("Creating snapshot...")
     snapshot = client.snapshots.create(
         vcpus=VCPUS,
         memory=MEMORY,
         disk_size=DISK_SIZE,
     )
-    
+
     print(f"Starting instance from snapshot {snapshot.id}...")
     instance = client.instances.start(snapshot.id)
-    
+
     try:
         # Setup Docker environment with BuildKit
         setup_docker_environment(instance)
-        
+
         # Create application files
         create_health_check_app(instance)
         create_index_html(instance)
         create_entrypoint_script(instance)
         create_requirements_file(instance)
         create_dockerfile(instance)
-        
+
         # Build and run container with BuildKit
         container_id = build_and_run_container(instance)
         if not container_id:
             return
-        
+
         # Display information
         print("\nSetup complete!")
         print(f"Instance ID: {instance.id}")
         print(f"Container ID: {container_id}")
-        
+
         # Check health endpoint and web server (wait at least 1 minute)
         print("\nChecking services (waiting at least 1 minute)...")
         if wait_for_health_check(client, instance):
             print("\n✅ All services are up and running!")
         else:
             print("\n⚠️ Some services might not be fully operational")
-        
+
         print("\nURLs to access:")
         instance = client.instances.get(instance.id)  # Refresh instance info
         for service in instance.networking.http_services:
             print(f"- {service.name}: {service.url}")
-        
+
         print("\nUseful commands:")
         print(f"SSH access: morphcloud instance ssh {instance.id}")
-        print(f"View logs: morphcloud instance ssh {instance.id} -- sudo docker logs {container_id}")
-        print(f"Stop container: morphcloud instance ssh {instance.id} -- sudo docker stop {container_id}")
-        
+        print(
+            f"View logs: morphcloud instance ssh {instance.id} -- sudo docker logs {container_id}"
+        )
+        print(
+            f"Stop container: morphcloud instance ssh {instance.id} -- sudo docker stop {container_id}"
+        )
+
         # Create final snapshot
         print("\nCreating final snapshot of configured environment...")
         snapshot = instance.snapshot()
         print(f"Final snapshot created: {snapshot.id}")
-        print(f"You can start new instances from this snapshot with: morphcloud instance start {snapshot.id}")
-        
+        print(
+            f"You can start new instances from this snapshot with: morphcloud instance start {snapshot.id}"
+        )
+
     except Exception as e:
         print(f"\nError: {e}")
         print(f"\nFor troubleshooting: morphcloud instance ssh {instance.id}")
         raise
+
 
 if __name__ == "__main__":
     main()
