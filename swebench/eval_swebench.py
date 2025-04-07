@@ -3,7 +3,7 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#     "morphcloud",
+#     "morphcloud>=0.1.49",
 #     "swebench",
 #     "fire",
 # ]
@@ -83,6 +83,10 @@ def instance_snapshot_context(test_spec: TestSpec):
     snapshot = client.snapshots.create(
         vcpus=4, memory=16384, disk_size=32768, digest="swebench-base"
     )
+
+    # # use the base ubuntu container
+    snapshot = snapshot.as_container("ubuntu:22.04")
+    
     # Common steps executed once
     snapshot = (
         snapshot.setup("apt-get update -q")
