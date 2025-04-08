@@ -85,12 +85,12 @@ def instance_snapshot_context(test_spec: TestSpec):
         .exec("echo 'export DEBIAN_FRONTEND=noninteractive' >> ~/.bashrc")
         .exec("echo 'export TZ=\"Etc/UTC\"' >> ~/.bashrc")
         .exec("echo 'export DEBIAN_FRONTEND=noninteractive' >> ~/.profile")
-        .exec("echo 'export TZ=\"Etc/UTC\"' >> ~/.profile")        
+        .exec("echo 'export TZ=\"Etc/UTC\"' >> ~/.profile")
     )
     snapshot = (
         snapshot
         .exec(
-            "apt install -y wget git build-essential libffi-dev libtiff-dev jq curl locales locales-all tzdata patch"
+            "export TZ=\"Etc/UTC\"; export DEBIAN_FRONTEND=noninteractive; apt install -y wget git build-essential libffi-dev libtiff-dev jq curl locales locales-all tzdata patch"
         )
         # Install Miniconda
         .exec(
@@ -127,13 +127,13 @@ EOF
         snapshot = (
             snapshot.exec(
                 f"""
-                cat > /root/setup_repo.sh <<'EOF' 
+                cat > /root/setup_repo.sh <<'EOF'
 {repo_script}
 EOF
                 """
             )
-            .exec("chmod +x /root/setup_repo.sh")
-            .exec("bash /root/setup_repo.sh")
+            .exec("export TZ=\"Etc/UTC\"; export DEBIAN_FRONTEND=noninteractive;  chmod +x /root/setup_repo.sh")
+            .exec("export TZ=\"Etc/UTC\"; export DEBIAN_FRONTEND=noninteractive;  bash /root/setup_repo.sh")
         )
 
     with client.instances.start(snapshot.id, ttl_seconds=3600) as instance:
