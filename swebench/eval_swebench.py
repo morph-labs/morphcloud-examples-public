@@ -10,11 +10,12 @@
 #
 # [tool.uv.sources]
 # swebench = { git = "https://github.com/SWE-bench/SWE-bench" }
+# morphcloud = { git = "https://github.com/morph-labs/morph-python-sdk" }
 # ///
 
 """
 This script implements run_evaluation using Morph Cloud. It builds a snapshot
-via a chain of .setup() commands (including repository cloning and checkout
+via a chain of .exec() commands (including repository cloning and checkout
 using the environment_setup_commit), starting an instance, applying a patch,
 running tests and generating a report.
 """
@@ -71,7 +72,7 @@ def instance_snapshot_context(test_spec: TestSpec):
     Build the entire instance image
     """
     snapshot = client.snapshots.create(
-        vcpus=4, memory=16384, disk_size=32768, digest="swebench-base"
+        vcpus=4, memory=16384, disk_size=32768, digest="swebench-base3"
     )
 
     # # use the base ubuntu container
@@ -79,38 +80,43 @@ def instance_snapshot_context(test_spec: TestSpec):
 
     # Common steps executed once
     snapshot = (
-        snapshot.setup("apt-get update -q")
-        .setup("apt install -y python3.11 python3.11-venv")
-        .setup("echo 'export DEBIAN_FRONTEND=noninteractive' >> ~/.bashrc")
-        .setup("echo 'export TZ=\"Etc/UTC\"' >> ~/.bashrc")
-        .setup(
+        snapshot.exec("apt-get update -q")
+        .exec("apt install -y python3.11 python3.11-venv")
+        .exec("echo 'export DEBIAN_FRONTEND=noninteractive' >> ~/.bashrc")
+        .exec("echo 'export TZ=\"Etc/UTC\"' >> ~/.bashrc")
+        .exec("echo 'export DEBIAN_FRONTEND=noninteractive' >> ~/.profile")
+        .exec("echo 'export TZ=\"Etc/UTC\"' >> ~/.profile")        
+    )
+    snapshot = (
+        snapshot
+        .exec(
             "apt install -y wget git build-essential libffi-dev libtiff-dev jq curl locales locales-all tzdata patch"
         )
         # Install Miniconda
-        .setup(
+        .exec(
             "wget 'https://repo.anaconda.com/miniconda/Miniconda3-py311_23.11.0-2-Linux-x86_64.sh' -O miniconda.sh"
         )
-        .setup("bash miniconda.sh -b -p /opt/miniconda3")
-        .setup("echo 'export PATH=/opt/miniconda3/bin:$PATH' >> ~/.bashrc")
-        .setup("/opt/miniconda3/bin/conda init --all")
-        .setup("/opt/miniconda3/bin/conda config --append channels conda-forge")
-        .setup("adduser --disabled-password --gecos 'dog' nonroot")
-        .setup("mkdir -p /testbed")
+        .exec("bash miniconda.sh -b -p /opt/miniconda3")
+        .exec("echo 'export PATH=/opt/miniconda3/bin:$PATH' >> ~/.bashrc")
+        .exec("/opt/miniconda3/bin/conda init --all")
+        .exec("/opt/miniconda3/bin/conda config --append channels conda-forge")
+        .exec("adduser --disabled-password --gecos 'dog' nonroot")
+        .exec("mkdir -p /testbed")
     )
 
     env_script = test_spec.setup_env_script
     if env_script:
         snapshot = (
-            snapshot.setup(
+            snapshot.exec(
                 f"""
                 cat > /root/setup_env.sh <<'EOF'
 {env_script}
 EOF
                    """
             )
-            .setup("chmod +x /root/setup_env.sh")
-            .setup("bash -c 'source ~/.bashrc && /root/setup_env.sh'")
-            .setup(
+            .exec("chmod +x /root/setup_env.sh")
+            .exec("bash -c 'source ~/.bashrc && /root/setup_env.sh'")
+            .exec(
                 "echo 'source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed' >> /root/.bashrc"
             )
         )
@@ -119,15 +125,15 @@ EOF
     repo_script = test_spec.install_repo_script
     if repo_script:
         snapshot = (
-            snapshot.setup(
+            snapshot.exec(
                 f"""
                 cat > /root/setup_repo.sh <<'EOF' 
 {repo_script}
 EOF
                 """
             )
-            .setup("chmod +x /root/setup_repo.sh")
-            .setup("bash /root/setup_repo.sh")
+            .exec("chmod +x /root/setup_repo.sh")
+            .exec("bash /root/setup_repo.sh")
         )
 
     with client.instances.start(snapshot.id, ttl_seconds=3600) as instance:
