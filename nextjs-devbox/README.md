@@ -1,6 +1,8 @@
 # NextJS Devbox Example
 
-This guide shows you how to quickly spin up a NextJS devbox using [Morph Cloud](https://cloud.morph.so/developers).
+This guide shows you how to quickly spin up a Next.js devbox using [Morph Cloud](https://cloud.morph.so/developers).
+
+You'll need to use this [magic link](https://cloud.morph.so/web/nextjs) to get the snapshot that this example requires - you'll also get 1000 free credits!
 
 ## Quick Start
 
