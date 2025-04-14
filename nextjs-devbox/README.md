@@ -7,6 +7,10 @@ You'll need to use this [magic link](https://cloud.morph.so/web/nextjs) to get t
 ## Quick Start
 
 ```bash
+git clone https://github.com/morph-labs/morphcloud-examples-public
+
+cd morphcloud-examples-public/nextjs-devbox
+
 # Install uv (fast Python package installer)
 # On macOS and Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
