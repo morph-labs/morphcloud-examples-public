@@ -18,6 +18,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install required packages
 uv add --script nextjs_devbox.py morphcloud rich
 
+# https://cloud.morph.so/web/keys
+export MORPH_API_KEY=...
+
 uv run nextjs_devbox.py
 ```
 
