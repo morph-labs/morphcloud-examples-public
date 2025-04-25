@@ -1,4 +1,4 @@
-# pantograph-morph-cloud
+# Lean-Server-Morph-Cloud
 
 A ready-to-use Lean 4 server on Morph Cloud powered by PyPantograph. This service allows you to interact with the Lean theorem prover through HTTP endpoints, making it ideal for building tools, editors, and proof assistants that use Lean as a backend.
 
