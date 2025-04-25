@@ -75,14 +75,36 @@ snap = snap.exec(
 # Gateway code & start script
 snap = snap.upload("daemon.py", "/opt/pantograph/daemon.py")
 snap = snap.exec(
-    'echo "/opt/venv/bin/python -u /opt/pantograph/daemon.py" '
-    '> /root/start.sh && chmod +x /root/start.sh'
+    '''cat > /etc/systemd/system/pantograph.service << 'EOF'
+[Unit]
+Description=Pantograph Lean Server
+After=network.target
+
+[Service]
+ExecStart=/opt/venv/bin/python -u /opt/pantograph/daemon.py
+WorkingDirectory=/root/mathlib_project
+User=root
+Group=root
+Restart=always
+RestartSec=5
+Environment="PATH=/root/.elan/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+'''
 )
 
 console.print(f"[green bold]Snapshot ready:[/green bold] {snap.id}")
 
 instance = mc.instances.start(snap.id)
-instance.exec("export PATH=\"$HOME/.elan/bin:$PATH\" && bash /root/start.sh")
+instance.exec(
+    "systemctl daemon-reload && "
+    "systemctl enable pantograph.service && "
+    "systemctl start pantograph.service"
+)
 pantograph_url = instance.expose_http_service("pantograph", 5326)
 
 console.print(f"[green bold]Pantograph server ready at:[/green bold] {pantograph_url}")
