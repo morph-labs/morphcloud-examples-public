@@ -18,7 +18,7 @@ This repository provides:
 ## Deployment
 
 1. Clone this repository
-2. Make sure your Morph Cloud token is configured (set as environment variable `MORPHCLOUD_API_KEY`)
+2. Make sure your [Morph Cloud](https://cloud.morph.so/web) token is configured (set as environment variable `MORPH_API_KEY`)
 3. Run the setup script:
 
 ```bash
