@@ -1,13 +1,46 @@
 import uuid, uvicorn
 import asyncio
 from asyncio import DefaultEventLoopPolicy
-from typing import Any
+from pydantic import BaseModel
+from typing import Any, Dict, Optional, Literal, Union
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pantograph import Server, ServerError
 from pantograph.server import TacticFailure
 from pantograph.data import CompilationUnit
+from pantograph.expr import TacticHave, TacticLet, TacticCalc, TacticExpr
+
+class StringTacticRequest(BaseModel):
+    type: Literal["string"]
+    tactic: str
+
+class HaveTacticRequest(BaseModel):
+    type: Literal["have"]
+    branch: str
+    binder_name: Optional[str] = None
+
+class LetTacticRequest(BaseModel):
+    type: Literal["let"]
+    branch: str
+    binder_name: Optional[str] = None
+
+class CalcTacticRequest(BaseModel):
+    type: Literal["calc"]
+    step: str
+
+class ExprTacticRequest(BaseModel):
+    type: Literal["expr"]
+    expr: str
+
+# Combined request model
+TacticRequest = Union[
+    StringTacticRequest, 
+    HaveTacticRequest, 
+    LetTacticRequest, 
+    CalcTacticRequest, 
+    ExprTacticRequest
+]
 
 PORT, app = 5326, FastAPI()
 srv = None
@@ -56,10 +89,64 @@ async def goal_start(term: str):
     return out
 
 @app.post("/goal_tactic")
-async def goal_tactic(handle: str, goal_id: int, tactic: str):
-    if handle not in handles: raise HTTPException(404)
+async def goal_tactic(
+    handle: str, 
+    goal_id: int, 
+    tactic_request: Union[TacticRequest, Dict[str, Any]]
+):
+    if handle not in handles:
+        raise HTTPException(404)
+    
+    # First determine if this is a direct tactic specification or a TacticRequest
+    if isinstance(tactic_request, dict) and "__tactic_type" in tactic_request:
+        # Direct tactic specification format
+        tactic_type = tactic_request.pop("__tactic_type")
+        
+        if tactic_type == "TacticHave":
+            tactic = TacticHave(**tactic_request)
+        elif tactic_type == "TacticLet":
+            tactic = TacticLet(**tactic_request)
+        elif tactic_type == "TacticCalc":
+            tactic = TacticCalc(**tactic_request)
+        elif tactic_type == "TacticExpr":
+            tactic = TacticExpr(**tactic_request)
+        elif tactic_type == "string":
+            tactic = tactic_request.get("tactic", "")
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid direct tactic type: {tactic_type}"
+            )
+    else:
+        # Standard TacticRequest format
+        if tactic_request.type == "string":
+            tactic = tactic_request.tactic
+        elif tactic_request.type == "have":
+            tactic = TacticHave(
+                branch=tactic_request.branch,
+                binder_name=tactic_request.binder_name
+            )
+        elif tactic_request.type == "let":
+            tactic = TacticLet(
+                branch=tactic_request.branch,
+                binder_name=tactic_request.binder_name
+            )
+        elif tactic_request.type == "calc":
+            tactic = TacticCalc(step=tactic_request.step)
+        elif tactic_request.type == "expr":
+            tactic = TacticExpr(expr=tactic_request.expr)
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid tactic type: {tactic_request.type}"
+            )
+    
+    # Call the pantograph service with the constructed tactic
     st = await srv.goal_tactic_async(handles[handle], goal_id, tactic)
-    out = vars(st).copy(); out["handle"] = _new_handle(st); out.pop("state_id", None)
+    out = vars(st).copy()
+    out["handle"] = _new_handle(st)
+    out.pop("state_id", None)
+    
     return out
 
 @app.get("/goal_state/{handle}")

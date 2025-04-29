@@ -52,6 +52,31 @@ The server exposes several HTTP endpoints for interacting with Lean. Here are th
   ```json
   {"handle": "gs_1234abcd", "goal_id": 0, "tactic": "intro n"}
   ```
+  Tactics have, let, calc, and expr have structured parameters and can be requested in two ways:
+  - Method 1 - Using type field:
+    ```json
+    {
+      "handle": "gs_1234abcd", 
+      "goal_id": 0, 
+      "tactic_request": {
+        "type": "have",
+        "branch": "h : n > 0",
+        "binder_name": "h"
+      }
+    }
+    ```
+  - Method 2 - Using __tactic_type field:
+    ```json
+    {
+      "handle": "gs_1234abcd", 
+      "goal_id": 0, 
+      "tactic_request": {
+        "__tactic_type": "TacticHave",
+        "branch": "h : n > 0",
+        "binder_name": "h"
+      }
+    }
+    ```
 
 - `GET /goal_state/{handle}` - Get the current state of a goal
 
