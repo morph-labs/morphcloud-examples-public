@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pantograph import Server, ServerError
+from pantograph.server import TacticFailure
 from pantograph.data import CompilationUnit
 
 PORT, app = 5326, FastAPI()
@@ -34,7 +35,13 @@ async def pantograph_exception_handler(request: Request, exc: ServerError):
         status_code=422,
         content={"lean_error": exc.args[0]}
     )
-
+@app.exception_handler(TacticFailure)
+async def tactic_failure_handler(request: Request, exc: TacticFailure):
+    # Return the tactic error messages as JSON
+    return JSONResponse(
+        status_code=422,  # Unprocessable Entity - request was valid but couldn't be processed
+        content={"tactic_error": exc.args[0]}
+    )
 @app.on_event("startup")
 async def boot():  # one Lean kernel
     global srv; srv = await Server.create(imports=['Init', 'Mathlib'], project_path = "/root/mathlib_project/", timeout = 350)
@@ -93,13 +100,11 @@ async def goal_load(path: str):
 
 # ---------- whole‑file compilation ----------
 def _cu_to_dict(cu: CompilationUnit):
+    # Handle messages as strings instead of dictionaries
+    messages_list = [{"text": m, "severity": "info", "line": 0, "col": 0} for m in cu.messages]
+    
     return {
-        "messages": [
-            {"severity": m["severity"],
-             "text": m["data"]["pp"],
-             "line": m["data"]["pos"]["line"],
-             "col": m["data"]["pos"]["column"]} for m in cu.messages
-        ],
+        "messages": messages_list,
         **({"goal_handle": _new_handle(cu.goal_state)} if cu.goal_state else {}),
         **({"tactic_invocations": cu.invocations} if cu.invocations else {})
     }
